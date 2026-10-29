@@ -1,0 +1,54 @@
+{
+  "entities": {
+    "users": {
+      "title": "Users",
+      "description": "User profiles, personal settings, and private API configurations",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "description": "User email address" },
+        "displayName": { "type": "string", "description": "Display name" },
+        "photoURL": { "type": "string", "description": "Avatar photo URL" },
+        "apiKey": { "type": "string", "description": "User personal Gemini API key" },
+        "personalityPrompt": { "type": "string", "description": "Custom personality instructions" },
+        "speakingStyle": { "type": "string", "description": "Preferred speaking style" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Account created timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last updated timestamp" }
+      },
+      "required": ["uid"]
+    },
+    "memories": {
+      "title": "Memories",
+      "description": "Stored user memories, preferences, and facts",
+      "properties": {
+        "text": { "type": "string", "description": "Memory content" },
+        "category": { "type": "string", "description": "Category e.g. preference, habit, personal_fact" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Updated timestamp" }
+      },
+      "required": ["text", "timestamp"]
+    },
+    "conversations": {
+      "title": "Conversations",
+      "description": "Log of past user and assistant messages",
+      "properties": {
+        "role": { "type": "string", "description": "user or assistant" },
+        "message": { "type": "string", "description": "Message transcript text" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Time sent" }
+      },
+      "required": ["role", "message", "timestamp"]
+    },
+    "reminders": {
+      "title": "Reminders",
+      "description": "Scheduled reminders and tasks",
+      "properties": {
+        "title": { "type": "string", "description": "Reminder text" },
+        "time": { "type": "string", "description": "Time display string" },
+        "dueTimestamp": { "type": "number", "description": "Due epoch timestamp in ms" },
+        "completed": { "type": "boolean", "description": "Completion flag" },
+        "notified": { "type": "boolean", "description": "Notification triggered flag" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Created time" }
+      },
+      "required": ["title", "completed"]
+    }
+  }
+}

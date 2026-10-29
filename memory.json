@@ -1,0 +1,40 @@
+{
+  "user_profile": {
+    "name": "Sondip",
+    "personality": "Primary User & Developer",
+    "interests": [
+      "Coding",
+      "AI"
+    ],
+    "goals": [],
+    "current_location": "Mirpur 1, Bishil, Dhaka, Dhaka Metropolitan, Dhaka District, Dhaka Division, 1216, Bangladesh",
+    "latitude": 23.803189632623855,
+    "longitude": 90.35105181691742
+  },
+  "speakers": [
+    {
+      "id": "spk_sondip",
+      "name": "Sondip",
+      "relationship": "Primary Owner / User",
+      "preferences": "Prefers communication in Bengali/Banglish (বাংলা), step-by-step simple math explanations, concise direct responses without extra unnecessary talk",
+      "notes": "Primary user and owner of Tune",
+      "lastSpokeAt": "2026-08-09T09:14:45.566Z"
+    }
+  ],
+  "active_speaker": {
+    "name": "Sondip",
+    "relationship": "Primary Owner / User",
+    "confidence": "high"
+  },
+  "preferences": {
+    "speaking_style": "Bengali & Banglish (বাংলা / বাংলিশ)",
+    "favorite_topics": ["Math problem solving", "Screen share tutoring", "AI & Coding"],
+    "wave_rotation_deg": -55,
+    "theme_mode": "classic"
+  },
+  "history": {
+    "important_events": [],
+    "previous_projects": []
+  },
+  "memories": []
+}

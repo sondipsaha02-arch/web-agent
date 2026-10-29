@@ -1,0 +1,69 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+
+/* Custom voice-active breathing animations and pulse effects */
+@keyframes voice-pulse-listening {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 30px rgba(16, 185, 129, 0.4), inset 0 0 15px rgba(16, 185, 129, 0.2);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 0 50px rgba(16, 185, 129, 0.7), inset 0 0 25px rgba(16, 185, 129, 0.4);
+  }
+}
+
+@keyframes voice-pulse-speaking {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 30px rgba(59, 130, 246, 0.4), inset 0 0 15px rgba(59, 130, 246, 0.2);
+  }
+  50% {
+    transform: scale(1.08);
+    box-shadow: 0 0 60px rgba(59, 130, 246, 0.8), inset 0 0 30px rgba(59, 130, 246, 0.5);
+  }
+}
+
+@keyframes glow-thinking {
+  0%, 100% {
+    box-shadow: 0 0 30px rgba(139, 92, 246, 0.4);
+    filter: hue-rotate(0deg);
+  }
+  50% {
+    box-shadow: 0 0 50px rgba(236, 72, 153, 0.6);
+    filter: hue-rotate(180deg);
+  }
+}
+
+@keyframes ambient-bg-drift {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+.animate-pulse-listening {
+  animation: voice-pulse-listening 2s infinite ease-in-out;
+}
+
+.animate-pulse-speaking {
+  animation: voice-pulse-speaking 1.6s infinite ease-in-out;
+}
+
+.animate-thinking {
+  animation: glow-thinking 3s infinite linear;
+}
+
+.bg-ambient-gradient {
+  background: linear-gradient(-45deg, #09090b, #111827, #0f172a, #030712);
+  background-size: 400% 400%;
+  animation: ambient-bg-drift 15s ease infinite;
+}

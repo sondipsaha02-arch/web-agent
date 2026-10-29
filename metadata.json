@@ -1,0 +1,13 @@
+{
+  "name": "Remix Tune",
+  "description": "A real-time voice-to-voice AI companion web app utilizing the Gemini Live API for low-latency emotional conversation.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "display-capture",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
