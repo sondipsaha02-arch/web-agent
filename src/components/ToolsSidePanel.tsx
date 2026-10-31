@@ -52,7 +52,10 @@ import {
   updateActiveProfileApiKey,
   deleteUserProfile,
   UserAccountProfile,
-  STORAGE_API_KEY_CONFIGURED
+  STORAGE_API_KEY_CONFIGURED,
+  AiProvider,
+  PROVIDERS,
+  detectAiProvider
 } from "../utils/userProfiles";
 
 interface ToolsSidePanelProps {
@@ -83,13 +86,19 @@ interface ToolsSidePanelProps {
   onOpenControlPanel?: () => void;
   onOpenApiKeySetup?: () => void;
   onOpenAccountModal?: () => void;
+  onOpenPersonalityModal?: () => void;
   onOpenInstallApp?: () => void;
 
   // Voice sensitivity
   voiceSensitivity?: number;
   onVoiceSensitivityChange?: (val: number) => void;
 
-  connectionState?: ConnectionState;
+  // Floating Chat Line toggle
+  showFloatingChatBar?: boolean;
+  toggleFloatingChatBar?: () => void;
+
+  // Text Mode trigger
+  onOpenTextMode?: () => void;
 }
 
 // iOS Switch Component (Apple Settings / Control Center style)
@@ -143,10 +152,14 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
   onOpenControlPanel,
   onOpenApiKeySetup,
   onOpenAccountModal,
+  onOpenPersonalityModal,
   onOpenInstallApp,
   voiceSensitivity = 65,
   onVoiceSensitivityChange,
   connectionState = "disconnected",
+  showFloatingChatBar = true,
+  toggleFloatingChatBar,
+  onOpenTextMode,
 }) => {
   const [showMoreTools, setShowMoreTools] = useState(false);
   const [localSensitivity, setLocalSensitivity] = useState(voiceSensitivity);
@@ -163,6 +176,7 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
   // Inline API Key Configuration
   const [isEditingApiKey, setIsEditingApiKey] = useState(false);
   const [apiKeyInput, setApiKeyInput] = useState(() => activeProfile.apiKey || "");
+  const [selectedProvider, setSelectedProvider] = useState<AiProvider | "auto">("auto");
   const [showApiKeyText, setShowApiKeyText] = useState(false);
   const [isVerifyingApiKey, setIsVerifyingApiKey] = useState(false);
   const [apiKeyFeedback, setApiKeyFeedback] = useState<{ message: string; isError?: boolean } | null>(null);
@@ -179,6 +193,7 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
       setProfiles(p);
       setActiveProfile(a);
       setApiKeyInput(a.apiKey || "");
+      setSelectedProvider(a.provider || "auto");
       setApiKeyFeedback(null);
       setIsEditingApiKey(false);
       setShowProfileSwitcher(false);
@@ -192,12 +207,14 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
       setActiveProfile(updatedActive);
       setProfiles(getStoredProfiles());
       setApiKeyInput(updatedActive.apiKey || "");
+      setSelectedProvider(updatedActive.provider || "auto");
     };
     const handleKeyUpdated = (e: any) => {
       const updatedActive = getActiveProfile();
       setActiveProfile(updatedActive);
       setProfiles(getStoredProfiles());
       setApiKeyInput(updatedActive.apiKey || "");
+      setSelectedProvider(updatedActive.provider || "auto");
     };
     window.addEventListener("tune-profile-changed", handleProfileChanged);
     window.addEventListener("tune-api-key-updated", handleKeyUpdated);
@@ -248,6 +265,7 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
     setActiveProfile(updated);
     setProfiles(getStoredProfiles());
     setApiKeyInput(updated.apiKey || "");
+    setSelectedProvider(updated.provider || "auto");
     setShowProfileSwitcher(false);
     setApiKeyFeedback({
       message: `Profile switched to ${updated.name}!`,
@@ -264,6 +282,7 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
     setActiveProfile(created);
     setProfiles(getStoredProfiles());
     setApiKeyInput(created.apiKey || "");
+    setSelectedProvider(created.provider || "auto");
     setNewProfileName("");
     setNewProfileRole("Member");
     setNewProfileApiKey("");
@@ -305,36 +324,40 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
       return;
     }
 
-    if (cleanKey.length < 15) {
+    if (cleanKey.length < 10) {
       setApiKeyFeedback({
-        message: "API Key-টি অসম্পূর্ণ বা ভুল ফরম্যাট। Gemini Key সাধারণত 'AIzaSy' দিয়ে শুরু হয়।",
+        message: "API Key is too short. Please paste a complete key.",
         isError: true,
       });
       soundEngine.playAlertBeep();
       return;
     }
 
+    // Determine target provider
+    const targetProvider = selectedProvider === "auto" ? detectAiProvider(cleanKey) : selectedProvider;
+
     setIsVerifyingApiKey(true);
-    setApiKeyFeedback({ message: "Verifying API Key with Gemini...", isError: false });
+    setApiKeyFeedback({ message: `Verifying API Key with ${PROVIDERS[targetProvider]?.name || targetProvider}...`, isError: false });
     soundEngine.playActionBeep();
 
     try {
       const res = await fetch("/api/validate-key", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: cleanKey }),
+        body: JSON.stringify({ apiKey: cleanKey, provider: targetProvider }),
       });
       const data = await res.json();
       setIsVerifyingApiKey(false);
 
       if (res.ok && data.valid) {
-        updateActiveProfileApiKey(cleanKey);
+        const verifiedProvider = (data.provider as AiProvider) || targetProvider;
+        updateActiveProfileApiKey(cleanKey, verifiedProvider);
         setActiveProfile(getActiveProfile());
         setProfiles(getStoredProfiles());
         setIsEditingApiKey(false);
         soundEngine.playNotificationChime();
         setApiKeyFeedback({
-          message: "API Key saved! Tune will never ask again.",
+          message: `${PROVIDERS[verifiedProvider]?.badge || "AI"} Key saved! Tune will never prompt again.`,
           isError: false,
         });
         setTimeout(() => setApiKeyFeedback(null), 5000);
@@ -352,20 +375,21 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
       }
     } catch (err: any) {
       setIsVerifyingApiKey(false);
+      // Fallback save if network issue
       if (cleanKey.length >= 20) {
-        updateActiveProfileApiKey(cleanKey);
+        updateActiveProfileApiKey(cleanKey, targetProvider);
         setActiveProfile(getActiveProfile());
         setProfiles(getStoredProfiles());
         setIsEditingApiKey(false);
         soundEngine.playNotificationChime();
         setApiKeyFeedback({
-          message: "API Key saved locally for this profile! Won't ask again.",
+          message: `${PROVIDERS[targetProvider]?.badge || "AI"} Key saved locally for this profile! Won't ask again.`,
           isError: false,
         });
         setTimeout(() => setApiKeyFeedback(null), 5000);
       } else {
         setApiKeyFeedback({
-          message: "Key verification failed. Check internet or key length.",
+          message: "Key verification failed. Check internet connection.",
           isError: true,
         });
         soundEngine.playAlertBeep();
@@ -647,22 +671,24 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
                   )}
                 </AnimatePresence>
 
-                {/* 0.2 GEMINI API KEY DEDICATED SLOT */}
+                {/* 0.2 GEMINI API KEY DEDICATED SLOT (Restored to exact clean look) */}
                 <div className="pt-2.5 border-t border-white/[0.08] space-y-2">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
                       <Key className="w-3.5 h-3.5 text-emerald-400" />
-                      <span className="text-[11px] font-bold tracking-tight text-white">Gemini API Key</span>
+                      <span className="text-[11px] font-bold tracking-tight text-white">
+                        Gemini API Key
+                      </span>
                     </div>
 
                     {activeProfile.apiKey ? (
-                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-[9px] font-mono font-semibold flex items-center gap-1">
-                        <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400" />
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[9px] font-mono font-medium flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                         Configured
                       </span>
                     ) : (
-                      <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[9px] font-mono font-semibold">
-                        Free / Default
+                      <span className="px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[9px] font-mono font-medium">
+                        Not Configured
                       </span>
                     )}
                   </div>
@@ -671,15 +697,13 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
                   {!isEditingApiKey ? (
                     <div className="bg-black/40 border border-white/5 rounded-xl p-2.5 flex items-center justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="text-[11px] font-mono text-white/80 truncate">
+                        <div className="text-[11px] font-mono text-white/90 truncate">
                           {activeProfile.apiKey
                             ? `${activeProfile.apiKey.slice(0, 8)}••••••••${activeProfile.apiKey.slice(-4)}`
-                            : "No personal API key set"}
+                            : "No personal API key configured"}
                         </div>
                         <div className="text-[9px] text-white/40 mt-0.5">
-                          {activeProfile.apiKey
-                            ? "Save permanent: Tune will never prompt again."
-                            : "Set your free key for unlimited continuous sessions."}
+                          Save permanent: Tune will never prompt again.
                         </div>
                       </div>
 
@@ -689,23 +713,24 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
                             soundEngine.playActionBeep();
                             setIsEditingApiKey(true);
                             setApiKeyInput(activeProfile.apiKey || "");
+                            setSelectedProvider(activeProfile.provider || "auto");
                           }}
                           className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 active:scale-95 text-white/90 text-[10px] font-semibold transition cursor-pointer flex items-center gap-1"
                         >
                           <Edit3 className="w-3 h-3 text-cyan-400" />
-                          <span>{activeProfile.apiKey ? "Change" : "Set Key"}</span>
+                          <span>Change</span>
                         </button>
                       </div>
                     </div>
                   ) : (
-                    /* Inline Key Editor */
+                    /* Inline Simple Key Editor (Clean & Direct) */
                     <div className="bg-black/50 border border-emerald-500/30 rounded-xl p-2.5 space-y-2">
                       <div className="relative flex items-center">
                         <input
                           type={showApiKeyText ? "text" : "password"}
                           value={apiKeyInput}
                           onChange={(e) => setApiKeyInput(e.target.value)}
-                          placeholder="Paste Gemini API Key (AIzaSy...)"
+                          placeholder="Paste API Key (Gemini, OpenRouter, etc.)"
                           autoComplete="off"
                           spellCheck="false"
                           disabled={isVerifyingApiKey}
@@ -721,14 +746,9 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
                       </div>
 
                       <div className="flex items-center justify-between gap-1.5 pt-0.5">
-                        <a
-                          href="https://aistudio.google.com/app/apikey"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[10px] text-cyan-400 hover:underline flex items-center gap-0.5"
-                        >
-                          Free Key নিন
-                        </a>
+                        <span className="text-[10px] text-white/40">
+                          Saves permanently on this device
+                        </span>
 
                         <div className="flex items-center gap-1.5">
                           <button
@@ -764,6 +784,24 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
                     </div>
                   )}
 
+                  {/* 0.25 FLOATING CHAT LINE TOGGLE (Requested by user) */}
+                  <div className="pt-2 border-t border-white/[0.06] flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-cyan-500/15 border border-cyan-500/20 flex items-center justify-center text-cyan-300">
+                        <MessageSquare className="w-3.5 h-3.5" />
+                      </div>
+                      <div>
+                        <div className="text-[11px] font-semibold text-white">Floating Chat Line</div>
+                        <div className="text-[9px] text-white/45">Draggable bar on screen to open chat</div>
+                      </div>
+                    </div>
+                    <IOSSwitch
+                      checked={showFloatingChatBar}
+                      onChange={toggleFloatingChatBar || (() => {})}
+                      activeColor="bg-cyan-500"
+                    />
+                  </div>
+
                   {/* Feedback toast */}
                   {apiKeyFeedback && (
                     <div className={`px-2.5 py-1.5 rounded-lg text-[10px] flex items-center gap-1.5 ${
@@ -777,8 +815,28 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
                   )}
                 </div>
 
-                {/* 0.3 QUICK SETTINGS & CONTROL SHORTCUT */}
-                <div className="pt-2 border-t border-white/[0.06] flex items-center justify-between">
+                {/* 0.3 AI PERSONALITY & BEHAVIOR (USER CUSTOMIZABLE) */}
+                <div className="pt-2 border-t border-white/[0.06] space-y-1.5">
+                  <button
+                    onClick={() => {
+                      soundEngine.playActionBeep();
+                      if (onOpenPersonalityModal) {
+                        onOpenPersonalityModal();
+                      } else if (onOpenAccountModal) {
+                        onOpenAccountModal();
+                      }
+                      onClose();
+                    }}
+                    className="w-full py-1.5 px-3 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 active:scale-[0.98] border border-purple-500/25 flex items-center justify-between text-[11px] font-semibold text-purple-300 hover:text-purple-200 transition cursor-pointer"
+                    title="Describe and customize AI personality & behavior"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                      <span>AI Personality (ব্যক্তিত্ব ও আচরণ)</span>
+                    </span>
+                    <ChevronRight className="w-3.5 h-3.5 text-purple-400/50" />
+                  </button>
+
                   <button
                     onClick={() => {
                       soundEngine.playActionBeep();
@@ -796,7 +854,7 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
                 </div>
               </div>
 
-              {/* SECTION A: iOS Control Center 2x2 Quick Tiles */}
+              {/* SECTION A: iOS Control Center Quick Controls */}
               <div>
                 <div className="flex items-center justify-between mb-2 px-1">
                   <span className="text-[11px] font-semibold text-white/50 uppercase tracking-wider">
@@ -816,6 +874,32 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
                         : "Ready"}
                     </span>
                   </div>
+                </div>
+
+                {/* DEDICATED TEXT MODE TILE (USER REQUIREMENT: ONLY OPEN FROM SIDE PANEL) */}
+                <div
+                  onClick={() => {
+                    soundEngine.playActionBeep();
+                    if (onOpenTextMode) onOpenTextMode();
+                    onClose();
+                  }}
+                  className="mb-2.5 p-3 rounded-[20px] border border-cyan-500/30 bg-gradient-to-r from-cyan-950/40 via-blue-950/25 to-zinc-900/40 hover:border-cyan-400/60 active:scale-[0.98] transition-all cursor-pointer flex items-center justify-between shadow-[0_4px_16px_rgba(6,182,212,0.12)] group"
+                  title="Open Text Mode (চ্যাট মোড)"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-[12px] bg-gradient-to-tr from-cyan-500 to-blue-600 text-white flex items-center justify-center shadow-md group-hover:scale-105 transition-transform">
+                      <MessageSquare className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-[12px] font-bold text-white tracking-tight flex items-center gap-1.5">
+                        <span>Text Mode</span>
+                        <span className="text-[10px] text-cyan-300 font-normal">চ্যাট মোড</span>
+                        <span className="px-1.5 py-0.2 rounded-full bg-cyan-500/20 text-cyan-300 text-[8px] font-semibold">Active AI</span>
+                      </div>
+                      <div className="text-[9px] text-white/50">ক্লিক করে চ্যাট বক্স ওপেন করুন</div>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-cyan-400/70 group-hover:translate-x-0.5 group-hover:text-cyan-300 transition-all" />
                 </div>
 
                 <div className="grid grid-cols-2 gap-2.5">

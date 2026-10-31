@@ -98,6 +98,7 @@ import { LiveProcessHUD } from "./components/LiveProcessHUD";
 import { ShareModal } from "./components/ShareModal";
 import { ApiKeySetupModal } from "./components/ApiKeySetupModal";
 import { AccountAuthModal } from "./components/AccountAuthModal";
+import { InteractiveChatDrawer } from "./components/InteractiveChatDrawer";
 
 // Advanced Workstation & Multi-Agent Co-worker Panels
 import { AgenticHub } from "./components/AgenticHub";
@@ -127,6 +128,7 @@ export default function App() {
   
   // Custom dashboard panel toggles
   const [isToolsSidePanelOpen, setIsToolsSidePanelOpen] = useState(false);
+  const [isControlPanelOpen, setIsControlPanelOpen] = useState(false);
   const [isFileManagerOpen, setIsFileManagerOpen] = useState(false);
   const [isAgenticHubOpen, setIsAgenticHubOpen] = useState(false);
   const [isChatHistoryOpen, setIsChatHistoryOpen] = useState(false);
@@ -134,6 +136,8 @@ export default function App() {
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState<boolean>(false);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState<boolean>(false);
+  const [accountModalInitialTab, setAccountModalInitialTab] = useState<"account" | "personality" | "apikey">("account");
+  const [isChatDrawerOpen, setIsChatDrawerOpen] = useState<boolean>(false);
   const [firebaseUser, setFirebaseUser] = useState<User | null>(auth.currentUser);
   const [isIntelligentPAOpen, setIsIntelligentPAOpen] = useState(false);
   const [activeDraft, setActiveDraft] = useState<ActiveDraft | null>(() => {
@@ -281,6 +285,21 @@ export default function App() {
       if (profileUnsub) profileUnsub();
     };
   }, []);
+
+  const [showFloatingChatBar, setShowFloatingChatBar] = useState<boolean>(() => {
+    if (typeof localStorage !== "undefined") {
+      return localStorage.getItem("tune_show_floating_chat_bar") === "true";
+    }
+    return false;
+  });
+
+  const isToolsSidePanelOpenRef = useRef(isToolsSidePanelOpen);
+  isToolsSidePanelOpenRef.current = isToolsSidePanelOpen;
+  const isControlPanelOpenRef = useRef(isControlPanelOpen);
+  isControlPanelOpenRef.current = isControlPanelOpen;
+
+  // Note: Swipe-up gesture on home screen is disabled as per user instruction.
+  // Text mode is accessed strictly via the "Text Mode (চ্যাট মোড)" button in Tools Side Panel.
 
   const handleSwitchMode = (nextMode: "manual" | "auto" | "normal" | "asking") => {
     setOperationMode(nextMode);
@@ -466,7 +485,6 @@ export default function App() {
   }, []);
 
   // Slide-out panel toggles (Now unified under ControlPanel modal)
-  const [isControlPanelOpen, setIsControlPanelOpen] = useState(false);
   const [showGuideModal, setShowGuideModal] = useState(false);
   const [bypassSecurity, setBypassSecurityState] = useState(() => toolManagerInstance.getBypassSecurity());
   const [screenShareRequest, setScreenShareRequest] = useState<{ reason: string; callback: (approved: boolean) => void } | null>(null);
@@ -1673,7 +1691,7 @@ export default function App() {
         />
 
         {/* ULTRA-MINIMAL SEAMLESS FLOATING SUBTITLES & SEARCH DECK */}
-        <div className="absolute bottom-6 w-full max-w-2xl px-4 pointer-events-none z-20 flex justify-center">
+        <div className="absolute bottom-5 w-full max-w-xl px-4 pointer-events-none z-20 flex justify-center">
           <FloatingSubtitleStream
             connectionState={connectionState}
             transcriptions={transcriptions}
@@ -1681,12 +1699,45 @@ export default function App() {
         </div>
       </main>
 
-
+      {/* 8.1 FLOATING MINIMALIST CHAT LINE HANDLE (Freely draggable anywhere on screen, toggled via Control Center) */}
+      {showFloatingChatBar && !isToolsSidePanelOpen && (
+        <motion.div
+          drag
+          dragMomentum={false}
+          whileHover={{ scale: 1.12 }}
+          whileTap={{ scale: 0.94 }}
+          onClick={() => {
+            soundEngine.playActionBeep();
+            setIsChatDrawerOpen(true);
+          }}
+          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 pointer-events-auto cursor-grab active:cursor-grabbing select-none group touch-none flex flex-col items-center justify-center p-2.5"
+          title="Hold and drag anywhere. Tap or swipe up to chat."
+          aria-label="Open AI Chat Handle"
+        >
+          {/* Minimalist Capsule Line / Bar (iOS Home Bar style) */}
+          <div className="relative flex items-center justify-center">
+            <div className="w-16 h-1.5 rounded-full bg-white/40 group-hover:bg-white/90 group-active:bg-cyan-400 shadow-[0_2px_12px_rgba(255,255,255,0.25)] border border-white/20 transition-all duration-200" />
+            <div className="absolute inset-0 bg-white/20 blur-sm rounded-full opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+          </div>
+        </motion.div>
+      )}
 
       {/* 9. TOOLS SIDE PANEL (Left Drawer) */}
       <ToolsSidePanel
         isOpen={isToolsSidePanelOpen}
         onClose={() => setIsToolsSidePanelOpen(false)}
+        onOpenTextMode={() => setIsChatDrawerOpen(true)}
+        showFloatingChatBar={showFloatingChatBar}
+        toggleFloatingChatBar={() => {
+          setShowFloatingChatBar((prev) => {
+            const next = !prev;
+            if (typeof localStorage !== "undefined") {
+              localStorage.setItem("tune_show_floating_chat_bar", String(next));
+            }
+            soundEngine.playActionBeep();
+            return next;
+          });
+        }}
         isSpeakerMuted={isSpeakerMuted}
         toggleSpeakerMute={toggleSpeakerMute}
         isAskingMode={isAskingMode}
@@ -1707,7 +1758,14 @@ export default function App() {
         onOpenDraftModal={() => setIsDraftModalOpen(true)}
         onOpenControlPanel={() => setIsControlPanelOpen(true)}
         onOpenApiKeySetup={() => setIsApiKeyModalOpen(true)}
-        onOpenAccountModal={() => setIsAccountModalOpen(true)}
+        onOpenAccountModal={() => {
+          setAccountModalInitialTab("account");
+          setIsAccountModalOpen(true);
+        }}
+        onOpenPersonalityModal={() => {
+          setAccountModalInitialTab("personality");
+          setIsAccountModalOpen(true);
+        }}
         onOpenInstallApp={() => setShowPwaModal(true)}
         voiceSensitivity={longTermMemory.preferences?.wave_sensitivity ?? 65}
         onVoiceSensitivityChange={(val) => {
@@ -1807,6 +1865,7 @@ export default function App() {
       <AccountAuthModal
         isOpen={isAccountModalOpen}
         onClose={() => setIsAccountModalOpen(false)}
+        initialTab={accountModalInitialTab}
         onApiKeyUpdated={(key) => {
           setRecallMessage(key ? "Personal API Key updated!" : "Using default API Key");
         }}
@@ -2004,6 +2063,13 @@ export default function App() {
         onClose={() => setShowPwaModal(false)}
         deferredPrompt={deferredPrompt}
         onTriggerInstall={handleInstallApp}
+      />
+
+      {/* 11.9 INTERACTIVE SLIDE-UP CHAT DRAWER (CHATGPT / MESSENGER STYLE) */}
+      <InteractiveChatDrawer
+        isOpen={isChatDrawerOpen}
+        onClose={() => setIsChatDrawerOpen(false)}
+        onOpenApiKeySetup={() => setIsApiKeyModalOpen(true)}
       />
 
       {/* NO FOOTER - PURE OBSIDIAN SCREEN */}

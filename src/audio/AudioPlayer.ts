@@ -195,6 +195,9 @@ export class AudioPlayer {
       }
       if (this.activeSources.length === 0) {
         this.isPlaying = false;
+        if (this.isDucked) {
+          this.setDucked(false);
+        }
       }
     };
 

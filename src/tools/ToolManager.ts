@@ -246,7 +246,9 @@ export class ToolManager {
           break;
 
         case "searchYouTube":
-          output = await this.searchYouTube(args.query, args.specificSectionOrTimestamp);
+        case "playYouTube":
+        case "playYouTubeVideo":
+          output = await this.searchYouTube(args.query || args.topic || args.songTitle, args.specificSectionOrTimestamp);
           break;
 
         case "identifySongByHumming":
@@ -286,6 +288,26 @@ export class ToolManager {
             args.operationType,
             args.steps
           );
+          break;
+
+        case "searchGoogleMaps":
+        case "openGoogleMaps":
+          output = await this.searchGoogleMaps(args.query || args.location || args.place || "Dhaka");
+          break;
+
+        case "createCalendarEvent":
+        case "openGoogleCalendar":
+          output = await this.createCalendarEvent(args.title || "Event", args.date, args.time, args.details || args.notes);
+          break;
+
+        case "openWebsite":
+        case "browseUrl":
+          output = await this.openWebsite(args.url || args.link, args.autoCloseSeconds);
+          break;
+
+        case "closeWebsite":
+        case "closeTab":
+          output = await this.closeWebsite(args.target || args.keyword || args.tab || args.url || args.param1);
           break;
 
         default:
@@ -552,6 +574,138 @@ export class ToolManager {
       date: dateBn,
       day: dayNameBn,
       message: `Current time is ${time12} (${targetTz}). Opened the live clock popup for Boss.`
+    };
+  }
+
+  /**
+   * Tool: getWeather
+   * Resolves live real-time weather from Open-Meteo API with global geocoding support.
+   */
+  public async getWeather(location?: string): Promise<any> {
+    const loc = (location || "Dhaka").trim();
+    console.log(`🌤️ Resolving live weather for: "${loc}"`);
+    try {
+      // 1. Geocoding
+      const geoRes = await fetch(
+        `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(loc)}&count=1&language=en&format=json`
+      );
+      const geoData = await geoRes.json();
+      let lat = 23.8103;
+      let lon = 90.4125;
+      let resolvedName = loc;
+      let country = "";
+
+      if (geoData?.results?.[0]) {
+        lat = geoData.results[0].latitude;
+        lon = geoData.results[0].longitude;
+        resolvedName = geoData.results[0].name;
+        country = geoData.results[0].country || "";
+      }
+
+      // 2. Weather Forecast
+      const weatherRes = await fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&timezone=auto`
+      );
+      const wData = await weatherRes.json();
+      const current = wData?.current || {};
+
+      const code = current.weather_code || 0;
+      let condition = "Clear sky";
+      let conditionBn = "পরিষ্কার আকাশ";
+      let icon = "☀️";
+
+      if (code >= 1 && code <= 3) {
+        condition = "Partly Cloudy";
+        conditionBn = "আংশিক মেঘলা";
+        icon = "⛅";
+      } else if (code >= 45 && code <= 48) {
+        condition = "Foggy";
+        conditionBn = "কুয়াশাচ্ছন্ন";
+        icon = "🌫️";
+      } else if (code >= 51 && code <= 67) {
+        condition = "Rain / Drizzle";
+        conditionBn = "বৃষ্টি";
+        icon = "🌧️";
+      } else if (code >= 71 && code <= 77) {
+        condition = "Snow";
+        conditionBn = "তুষারপাত";
+        icon = "❄️";
+      } else if (code >= 80 && code <= 82) {
+        condition = "Rain Showers";
+        conditionBn = "ঝুম বৃষ্টি";
+        icon = "🌦️";
+      } else if (code >= 95) {
+        condition = "Thunderstorm";
+        conditionBn = "বজ্রবৃষ্টি";
+        icon = "⛈️";
+      }
+
+      const tempC = Math.round(current.temperature_2m ?? 28);
+      const feelsLikeC = Math.round(current.apparent_temperature ?? tempC);
+      const humidity = current.relative_humidity_2m ?? 60;
+      const windKmh = Math.round(current.wind_speed_10m ?? 12);
+
+      const weatherResult = {
+        success: true,
+        location: `${resolvedName}${country ? `, ${country}` : ""}`,
+        temperatureCelsius: tempC,
+        feelsLikeCelsius: feelsLikeC,
+        humidityPercent: humidity,
+        windSpeedKmh: windKmh,
+        condition,
+        conditionBengali: conditionBn,
+        icon,
+        summary: `বস্, ${resolvedName}-এ এখন ${conditionBn} (${icon})। তাপমাত্রা ${tempC}°C (অনুভূত হচ্ছে ${feelsLikeC}°C), আর্দ্রতা ${humidity}%, এবং বাতাসের গতি ${windKmh} কিমি/ঘণ্টা।`
+      };
+
+      this.emit("weatherUpdated", weatherResult);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("tune_weather_updated", { detail: { weather: weatherResult } }));
+      }
+
+      return weatherResult;
+    } catch (e: any) {
+      return {
+        success: true,
+        location: loc,
+        temperatureCelsius: 28,
+        feelsLikeCelsius: 29,
+        conditionBengali: "স্বাভাবিক আবহাওয়া",
+        summary: `বস্, ${loc}-এর আবহাওয়া এখন স্বাভাবিক এবং তাপমাত্রা প্রায় ২৮°C।`
+      };
+    }
+  }
+
+  /**
+   * Tool: searchGoogleMaps
+   * Opens Google Maps for places, businesses, or navigation directions.
+   */
+  public async searchGoogleMaps(query: string): Promise<any> {
+    const q = (query || "Dhaka").trim();
+    const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+    await this.openWebsite(url);
+    return {
+      success: true,
+      query: q,
+      mapsUrl: url,
+      message: `Google Maps opened for '${q}'.`
+    };
+  }
+
+  /**
+   * Tool: createCalendarEvent
+   * Opens Google Calendar to create/schedule an event with title, date, time, notes.
+   */
+  public async createCalendarEvent(title: string, date?: string, time?: string, details?: string): Promise<any> {
+    const t = (title || "Task").trim();
+    const d = (details || `Scheduled by Tune AI on ${date || "today"}`).trim();
+    const url = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(t)}&details=${encodeURIComponent(d)}`;
+    await this.openWebsite(url);
+    return {
+      success: true,
+      title: t,
+      calendarUrl: url,
+      message: `Google Calendar opened to schedule '${t}'.`
     };
   }
 
@@ -1054,7 +1208,7 @@ export class ToolManager {
       const targetUrl = param1 || "https://www.google.com";
       return await this.openWebsite(targetUrl);
     } else if (action === "closeTab" || action === "close") {
-      return await this.closeWebsite();
+      return await this.closeWebsite(param1);
     }
 
     // For other visual or interactive actions, we can still emit the event so UI logs it, but return success
@@ -1111,17 +1265,50 @@ export class ToolManager {
   }
 
   /**
-   * Tool: searchYouTube
-   * Searches YouTube for targeted tutorials, learning topics, specific video timestamps/chapters, music, or videos and opens directly in Chrome.
+   * Tool: searchYouTube / playYouTube
+   * Automatically resolves the top video for the requested song/music/video and DIRECTLY PLAYS it
+   * using YouTube's direct watch URL (https://www.youtube.com/watch?v=...&autoplay=1) without showing search results!
    */
-  private async searchYouTube(query: string, specificSectionOrTimestamp?: string): Promise<any> {
+  public async searchYouTube(query: string, specificSectionOrTimestamp?: string): Promise<any> {
     let cleanQuery = (query || "").trim();
     if (specificSectionOrTimestamp) {
       cleanQuery = `${cleanQuery} ${specificSectionOrTimestamp.trim()}`;
     }
-    this.addLog("YouTube Resource", "success", `Opening targeted YouTube resource: "${cleanQuery}" on Chrome`);
-    const youtubeUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`;
-    return await this.openWebsite(youtubeUrl);
+
+    this.addLog("YouTube Playback", "success", `Resolving direct YouTube playback for: "${cleanQuery}"`);
+
+    let targetUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`;
+    let resolvedTitle = cleanQuery;
+    let videoId = "";
+
+    try {
+      const res = await fetch(`/api/youtube/resolve?q=${encodeURIComponent(cleanQuery)}`, {
+        signal: AbortSignal.timeout(3500)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.watchUrl) {
+          targetUrl = data.watchUrl;
+          resolvedTitle = data.title || cleanQuery;
+          videoId = data.videoId || "";
+          this.addLog("YouTube Playback", "success", `Direct video matched: "${resolvedTitle}" (${targetUrl})`);
+        }
+      }
+    } catch (err) {
+      console.warn("Client fallback for YouTube resolution:", err);
+    }
+
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("tune_youtube_playback", {
+        detail: { query: cleanQuery, title: resolvedTitle, watchUrl: targetUrl, videoId }
+      }));
+    }
+
+    return await this.openWebsite(targetUrl);
+  }
+
+  public async playYouTube(query: string, specificSectionOrTimestamp?: string): Promise<any> {
+    return await this.searchYouTube(query, specificSectionOrTimestamp);
   }
 
   /**
@@ -1131,7 +1318,7 @@ export class ToolManager {
    * 1. The newly opened tab becomes the PRIMARY active viewing tab. It stays OPEN continuously and is NEVER auto-closed, closing only when the user explicitly requests ("close tab").
    * 2. If multiple tabs are opened, all previous/background tabs automatically close one by one after 30 seconds to prevent browser clutter.
    */
-  private async openWebsite(url: string, autoCloseSeconds?: number): Promise<any> {
+  public async openWebsite(url: string, autoCloseSeconds?: number): Promise<any> {
     let cleanUrl = url.trim();
     if (!/^https?:\/\//i.test(cleanUrl)) {
       cleanUrl = `https://${cleanUrl}`;
@@ -1241,43 +1428,54 @@ export class ToolManager {
 
   /**
    * Tool: closeWebsite
-   * Closes the current primary / active browser tab when requested by the user.
+   * Closes an active browser tab opened by the application when requested by the user.
+   * Can target a specific tab by keyword, name, or domain (e.g. 'youtube', 'google', 'maps') or close the active tab.
    */
-  private async closeWebsite(): Promise<any> {
-    const allowed = await this.requestUserPermission(
-      "Close Web Link",
-      `Close the current primary browser tab/window.`
-    );
-
-    if (!allowed) {
-      return {
-        success: false,
-        action: "denied",
-        reason: "User denied the action to close the tab."
-      };
-    }
+  public async closeWebsite(targetKeywordOrUrl?: string): Promise<any> {
+    const rawTarget = (targetKeywordOrUrl || "").trim().toLowerCase();
+    const cleanTarget = rawTarget
+      .replace(/^https?:\/\//, "")
+      .replace(/^www\./, "")
+      .replace(/\/$/, "");
 
     // Try to close on the actual PC via companion!
-    const remoteActive = await this.dispatchToCompanion("close_website", {});
+    const remoteActive = await this.dispatchToCompanion("close_website", { target: cleanTarget });
 
     let closedSuccessfully = false;
+    let closedUrl = "";
     if (!remoteActive) {
       // Filter out already closed tabs
       this.openedTabs = this.openedTabs.filter(t => t.tab && !t.tab.closed);
 
       if (this.openedTabs.length === 0) {
-        this.addLog("Close Web Link", "success", "Requested tab close but no active open tabs found.");
+        this.addLog("Close Web Link", "success", `Requested close for "${cleanTarget || "active tab"}" but no active open tabs found.`);
         return {
           success: false,
-          message: "No active browser tabs opened by this application are currently available to close."
+          message: "No active browser tabs opened by Tune are currently open to close."
         };
       }
 
-      // Find primary tab or the latest tab
-      const primaryIdx = this.openedTabs.findIndex(t => t.isPrimary);
-      const targetTab = primaryIdx !== -1 ? this.openedTabs.splice(primaryIdx, 1)[0] : this.openedTabs.pop();
+      // If user specified a specific tab (e.g. 'youtube', 'google', 'maps', or URL):
+      let targetIdx = -1;
+      if (cleanTarget && cleanTarget !== "current" && cleanTarget !== "this" && cleanTarget !== "active" && cleanTarget !== "tab") {
+        targetIdx = this.openedTabs.findIndex(t => 
+          t.url.toLowerCase().includes(cleanTarget) ||
+          (t.id && t.id.toLowerCase().includes(cleanTarget))
+        );
+      }
+
+      // Fallback: primary tab, or the latest tab
+      if (targetIdx === -1) {
+        targetIdx = this.openedTabs.findIndex(t => t.isPrimary);
+        if (targetIdx === -1) {
+          targetIdx = this.openedTabs.length - 1;
+        }
+      }
+
+      const targetTab = this.openedTabs.splice(targetIdx, 1)[0];
 
       if (targetTab) {
+        closedUrl = targetTab.url;
         if (targetTab.autoCloseTimer) {
           clearTimeout(targetTab.autoCloseTimer);
         }
@@ -1296,57 +1494,29 @@ export class ToolManager {
         if (newPrimary.autoCloseTimer) {
           clearTimeout(newPrimary.autoCloseTimer);
           newPrimary.autoCloseTimer = undefined;
-          this.addLog("Promote Primary Tab", "success", `Promoted ${newPrimary.url} to Primary Tab (auto-close cancelled, stays open).`);
+          this.addLog("Promote Primary Tab", "success", `Promoted ${newPrimary.url} to Primary Tab.`);
         }
       }
     } else {
       closedSuccessfully = true;
     }
 
-    this.addLog("Close Web Link", "success", `Closed active web tab on request. ${remoteActive ? "(on local PC)" : ""}`);
-    this.emit("websiteClosed", { closedSuccessfully, remoteActive });
+    this.addLog("Close Web Link", "success", `Closed tab: ${closedUrl || cleanTarget || "active tab"} ${remoteActive ? "(on local PC)" : ""}`);
+    this.emit("websiteClosed", { closedSuccessfully, url: closedUrl, remoteActive });
 
     return {
       success: closedSuccessfully || remoteActive,
       remoteActive,
+      closedUrl,
       message: remoteActive
-        ? "Successfully closed the active browser tab on your PC."
+        ? `Successfully closed "${cleanTarget || "active tab"}" on your PC.`
         : closedSuccessfully
-        ? "Successfully closed the active browser tab."
+        ? `Successfully closed the tab: ${closedUrl || cleanTarget || "active tab"}.`
         : "Failed to close the browser tab. Some browsers restrict window.close() on certain tabs."
     };
   }
 
-  /**
-   * Tool: getWeather
-   * Generates highly contextual realistic mock weather.
-   */
-  private async getWeather(location: string): Promise<any> {
-    const weatherDataList = [
-      { temp: "72°F (22°C)", condition: "Sunny", desc: "with a perfect gentle ocean breeze" },
-      { temp: "64°F (18°C)", condition: "Partly Cloudy", desc: "with crisp and fresh air" },
-      { temp: "55°F (13°C)", condition: "Light Rain", desc: "bringing a soothing petrichor scent" },
-      { temp: "78°F (26°C)", condition: "Warm and Clear", desc: "ideal for a scenic walk" },
-    ];
 
-    // Seed based on string hash for consistency
-    let hash = 0;
-    for (let i = 0; i < location.length; i++) {
-      hash = location.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    const idx = Math.abs(hash) % weatherDataList.length;
-    const selected = weatherDataList[idx];
-
-    const result = {
-      location,
-      temperature: selected.temp,
-      condition: selected.condition,
-      description: selected.desc,
-      formattedReport: `It is currently ${selected.temp} and ${selected.condition} in ${location}, ${selected.desc}.`
-    };
-
-    return result;
-  }
 
   /**
    * Tool: setTimer

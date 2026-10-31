@@ -61,6 +61,7 @@ export class LiveSession {
   private thinkingTimeoutTimer: any = null;
   private duckRestoreTimer: any = null;
   private hasPendingInterruption: boolean = false;
+  private speechOverPlaybackFrames: number = 0;
 
   constructor(callbacks: LiveSessionCallbacks) {
     this.callbacks = callbacks;
@@ -114,9 +115,21 @@ export class LiveSession {
     this.isUserDisconnecting = false;
     this.updateState("connecting");
 
+    const customApiKey = typeof localStorage !== "undefined"
+      ? (localStorage.getItem("user_gemini_api_key") || localStorage.getItem("custom_gemini_api_key") || "").trim().replace(/^["']|["']$/g, '')
+      : "";
+
+    if (!customApiKey) {
+      this.updateState("disconnected");
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("tune_open_api_key_modal", { detail: { reason: "required" } }));
+      }
+      this.callbacks.onError("Please add your Google AI Studio API Key in Settings to start Live Conversation.");
+      return;
+    }
+
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const customApiKey = typeof localStorage !== "undefined" ? (localStorage.getItem("custom_gemini_api_key") || "").trim().replace(/^["']|["']$/g, '') : "";
-    const queryParam = customApiKey ? `?apiKey=${encodeURIComponent(customApiKey)}` : "";
+    const queryParam = `?apiKey=${encodeURIComponent(customApiKey)}`;
     const wsUrl = `${protocol}//${window.location.host}/ws${queryParam}`;
 
     console.log(`🔌 Connecting to Tune WebSocket proxy at: ${wsUrl}`);
@@ -185,7 +198,9 @@ export class LiveSession {
             recentDialogue = Array.from(mergedMap.values()).slice(-30);
           }
 
-          const customApiKey = typeof localStorage !== "undefined" ? localStorage.getItem("custom_gemini_api_key") || "" : "";
+          const customApiKey = typeof localStorage !== "undefined"
+            ? (localStorage.getItem("user_gemini_api_key") || localStorage.getItem("custom_gemini_api_key") || "").trim()
+            : "";
           const personalityPrompt = typeof localStorage !== "undefined" ? (localStorage.getItem("tune_custom_personality_prompt") || "").trim() : "";
 
           const clientTimeInfo = {
@@ -438,15 +453,24 @@ export class LiveSession {
                 window.dispatchEvent(new CustomEvent("tune_live_process_updated", { detail: { processState: initialProcess } }));
               }
 
-              if (msg.name === "performGoogleResearch" || msg.name === "controlBrowser" || msg.name === "openWebsite" || msg.name === "searchYouTube") {
+              if (msg.name === "performGoogleResearch" && searchTopic && searchTopic !== "openWebsite" && !searchTopic.toLowerCase().includes("openwebsite")) {
                 this.callbacks.onTranscription({
                   id: "search_start_" + Date.now(),
-                  text: `🔎 Daran Boss, ami Google e search kore dekhchi, ektu wait korun... ("${searchTopic}")`,
+                  text: searchTopic || "Google Search",
                   isUser: false,
                   timestamp: new Date(),
                   isResearch: true,
                   isSearching: true,
                   topic: searchTopic
+                });
+              } else if (msg.name === "searchYouTube" || msg.name === "playYouTube" || msg.name === "playYouTubeVideo") {
+                this.callbacks.onTranscription({
+                  id: "yt_start_" + Date.now(),
+                  text: `🎶 [YouTube Direct Playback]: ▶️ "${searchTopic || 'Music'}" সরাসরি প্লে করা হচ্ছে...`,
+                  isUser: false,
+                  timestamp: new Date(),
+                  isResearch: false,
+                  topic: `YouTube: ${searchTopic || 'Music'}`
                 });
               }
 
@@ -546,6 +570,17 @@ export class LiveSession {
               if (typeof window !== "undefined") {
                 window.dispatchEvent(new CustomEvent("tune_operation_mode_changed", { detail: { mode: incomingMode } }));
                 window.dispatchEvent(new CustomEvent("pa_asking_mode_changed", { detail: { askingMode: isAsking } }));
+              }
+              break;
+
+            case "toolAction":
+              console.log("⚡ Executing server-directed tool action:", msg.tool, msg.args);
+              if (msg.tool) {
+                try {
+                  toolManagerInstance.execute(msg.tool, msg.args || {});
+                } catch (toolActErr) {
+                  console.warn("Failed to execute toolAction:", toolActErr);
+                }
               }
               break;
 
@@ -701,27 +736,42 @@ export class LiveSession {
           this.ws.send(JSON.stringify({ type: "audio", data: base64PCM }));
         }
       },
-      (userVolume) => {
-        // Smart Voice Ducking:
-        // When speech is detected while Tune is talking:
-        // Lower Tune's volume to soft background voice (~28%), but DO NOT abruptly stop playback!
-        // ("ER MAJE JODI KONO KOTHA DETECT KORE TOKHON EKTU ASTE KOTHA BOLBE KINTU TAR KOTHA THAMABE NA")
+      (userVolume, isSpeech, rms) => {
+        // Perplexity-Style Voice Interaction Ducking:
+        // Volume drops ONLY when user is actively talking / interacting over Tune's voice.
+        // It NEVER drops on speaker sound feedback, room background air, breathing, or tiny volume spikes.
         if (this.player.getIsPlaying()) {
-          if (userVolume > 0.08) {
-            this.player.setDucked(true, 0.28);
-            if (this.duckRestoreTimer) {
-              clearTimeout(this.duckRestoreTimer);
-              this.duckRestoreTimer = null;
-            }
-          } else if (userVolume < 0.04 && this.player.getIsDucked()) {
-            if (!this.duckRestoreTimer) {
-              this.duckRestoreTimer = setTimeout(() => {
-                if (this.player.getIsPlaying()) {
-                  this.player.setDucked(false);
-                }
+          // Require clear, intentional user speech over speaker playback:
+          const isUserInteracting = Boolean(isSpeech && (userVolume > 0.38 || (rms !== undefined && rms > 0.045)));
+          if (isUserInteracting) {
+            this.speechOverPlaybackFrames++;
+            // Require at least 4 consecutive audio chunks (~120ms of sustained user speech)
+            if (this.speechOverPlaybackFrames >= 4) {
+              this.player.setDucked(true, 0.22);
+              if (this.duckRestoreTimer) {
+                clearTimeout(this.duckRestoreTimer);
                 this.duckRestoreTimer = null;
-              }, 750);
+              }
             }
+          } else {
+            this.speechOverPlaybackFrames = Math.max(0, this.speechOverPlaybackFrames - 1);
+            if (this.speechOverPlaybackFrames === 0 && this.player.getIsDucked()) {
+              if (!this.duckRestoreTimer) {
+                this.duckRestoreTimer = setTimeout(() => {
+                  this.player.setDucked(false);
+                  this.duckRestoreTimer = null;
+                }, 350);
+              }
+            }
+          }
+        } else {
+          this.speechOverPlaybackFrames = 0;
+          if (this.player.getIsDucked()) {
+            this.player.setDucked(false);
+          }
+          if (this.duckRestoreTimer) {
+            clearTimeout(this.duckRestoreTimer);
+            this.duckRestoreTimer = null;
           }
         }
       }

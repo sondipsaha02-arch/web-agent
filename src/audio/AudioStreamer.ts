@@ -14,7 +14,7 @@ export class AudioStreamer {
   private analyserNode: AnalyserNode | null = null;
   
   private onAudioDataCallback: ((base64: string) => void) | null = null;
-  private onVolumeCallback: ((volume: number) => void) | null = null;
+  private onVolumeCallback: ((volume: number, isSpeech?: boolean, rms?: number) => void) | null = null;
   private isRecording: boolean = false;
   private lastVolume: number = 0;
 
@@ -130,7 +130,7 @@ export class AudioStreamer {
    */
   async start(
     onAudioData: (base64: string) => void,
-    onVolume?: (volume: number) => void
+    onVolume?: (volume: number, isSpeech?: boolean, rms?: number) => void
   ): Promise<void> {
     if (this.isRecording) return;
 
@@ -304,7 +304,7 @@ export class AudioStreamer {
         const volume = Math.min(1.0, rms * (6.0 + sensNorm * 4.0));
         this.lastVolume = volume;
         if (this.onVolumeCallback) {
-          this.onVolumeCallback(volume);
+          this.onVolumeCallback(volume, isSpeechActive, rms);
         }
 
         // 5. Digital Pre-amp Gain calibrated by sensitivity and crowded isolation mode

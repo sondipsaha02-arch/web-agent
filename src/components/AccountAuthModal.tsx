@@ -32,12 +32,13 @@ import {
   type User,
   type UserProfile
 } from "../lib/firebase";
-import { updateActiveProfileApiKey, STORAGE_API_KEY_CONFIGURED } from "../utils/userProfiles";
+import { updateActiveProfileApiKey, STORAGE_API_KEY_CONFIGURED, detectAiProvider, PROVIDERS, AiProvider } from "../utils/userProfiles";
 
 interface AccountAuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   onApiKeyUpdated?: (key: string) => void;
+  initialTab?: "account" | "personality" | "apikey";
 }
 
 const PERSONALITY_PRESETS = [
@@ -71,7 +72,8 @@ const PERSONALITY_PRESETS = [
 export const AccountAuthModal: React.FC<AccountAuthModalProps> = ({
   isOpen,
   onClose,
-  onApiKeyUpdated
+  onApiKeyUpdated,
+  initialTab = "account"
 }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(auth.currentUser);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
@@ -90,7 +92,13 @@ export const AccountAuthModal: React.FC<AccountAuthModalProps> = ({
   const [personalitySaveSuccess, setPersonalitySaveSuccess] = useState(false);
 
   // Active tab inside modal: "account" | "personality" | "apikey"
-  const [activeTab, setActiveTab] = useState<"account" | "personality" | "apikey">("account");
+  const [activeTab, setActiveTab] = useState<"account" | "personality" | "apikey">(initialTab);
+
+  useEffect(() => {
+    if (isOpen) {
+      setActiveTab(initialTab);
+    }
+  }, [isOpen, initialTab]);
 
   // Subscribe to auth state
   useEffect(() => {
@@ -193,44 +201,50 @@ export const AccountAuthModal: React.FC<AccountAuthModalProps> = ({
     setKeySaveSuccess(false);
 
     try {
+      let detectedProv: AiProvider = "gemini";
       if (cleanKey) {
         if (cleanKey.startsWith("ya29.") || cleanKey.startsWith("Bearer ") || cleanKey.includes("eyJ")) {
-          setErrorMsg("এটি একটি Google OAuth এক্সেস টোকেন, Gemini API Key নয়। অনুগ্রহ করে Google AI Studio থেকে ফ্রি Gemini API Key প্রদান করুন (যা 'AIzaSy' দিয়ে শুরু হয়)।");
+          setErrorMsg("এটি একটি Google OAuth এক্সেস টোকেন, API Key নয়। অনুগ্রহ করে OpenRouter, Gemini, ChatGPT বা Claude এর API Key প্রদান করুন।");
           soundEngine.playAlertBeep();
           setIsVerifyingKey(false);
           return;
         }
 
-        if (cleanKey.length < 15) {
-          setErrorMsg("API Key-টি অসম্পূর্ণ। Gemini API Key সাধারণত 'AIzaSy' দিয়ে শুরু হয়।");
+        if (cleanKey.length < 10) {
+          setErrorMsg("API Key-টি অসম্পূর্ণ। সম্পূর্ণ কী পেস্ট করুন।");
           soundEngine.playAlertBeep();
           setIsVerifyingKey(false);
           return;
         }
+
+        detectedProv = detectAiProvider(cleanKey);
 
         // Validate key with server proxy
         const res = await fetch("/api/validate-key", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ apiKey: cleanKey })
+          body: JSON.stringify({ apiKey: cleanKey, provider: detectedProv })
         });
         const data = await res.json();
         if (!res.ok || !data.valid) {
-          const friendly = formatApiErrorMessage(data.error || "Invalid Gemini API Key. Please verify your key from Google AI Studio.");
+          const friendly = formatApiErrorMessage(data.error || "Invalid API Key. Please verify your key.");
           setErrorMsg(friendly);
           soundEngine.playAlertBeep();
           setIsVerifyingKey(false);
           return;
         }
+        if (data.provider) detectedProv = data.provider;
       }
 
       // Save to localStorage & active profile
       if (cleanKey) {
         localStorage.setItem("custom_gemini_api_key", cleanKey);
+        localStorage.setItem("tune_api_provider", detectedProv);
         localStorage.setItem(STORAGE_API_KEY_CONFIGURED, "true");
-        updateActiveProfileApiKey(cleanKey);
+        updateActiveProfileApiKey(cleanKey, detectedProv);
       } else {
         localStorage.removeItem("custom_gemini_api_key");
+        localStorage.removeItem("tune_api_provider");
         localStorage.removeItem(STORAGE_API_KEY_CONFIGURED);
         updateActiveProfileApiKey("");
       }

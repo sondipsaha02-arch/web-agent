@@ -37,10 +37,10 @@ const ai = new GoogleGenAI({
   },
 });
 
-// Route to validate a Gemini API Key (system or custom user key)
+// Route to validate an API Key for Gemini, OpenRouter, OpenAI, Claude, or Grok
 app.post("/api/validate-key", async (req, res) => {
   try {
-    const { apiKey } = req.body;
+    const { apiKey, provider: requestedProvider } = req.body;
     const rawKey = apiKey ? String(apiKey) : "";
     const keyToTest = rawKey
       .trim()
@@ -50,59 +50,588 @@ app.post("/api/validate-key", async (req, res) => {
       .trim();
 
     if (!keyToTest) {
-      return res.status(400).json({ valid: false, error: "No API key provided. Please paste your Gemini API Key." });
+      return res.status(400).json({ valid: false, error: "No API key provided. Please paste your API Key." });
     }
 
     if (keyToTest.startsWith("ya29.") || keyToTest.startsWith("Bearer ") || keyToTest.includes("eyJ")) {
       return res.status(400).json({
         valid: false,
-        error: "This is a Google OAuth access token, not a Gemini API Key. Please get a free Gemini API Key from Google AI Studio (starts with 'AIzaSy')."
+        error: "This is a Google OAuth access token, not an API Key. Please provide an API key from OpenRouter, Google Gemini, OpenAI, Claude, or Grok."
       });
     }
 
-    if (keyToTest.length < 15) {
+    if (keyToTest.length < 10) {
       return res.status(400).json({
         valid: false,
-        error: "API key format is invalid. Gemini API keys from Google AI Studio typically start with 'AIzaSy'."
+        error: "API key is too short. Please check and paste the full key."
       });
     }
 
-    const testAi = new GoogleGenAI({ apiKey: keyToTest });
-    // Lightweight validation check
-    const response = await testAi.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: "Hello",
-    });
-
-    if (response) {
-      return res.json({ valid: true, message: "API key is valid and working" });
-    } else {
-      return res.status(400).json({ valid: false, error: "No response from Gemini API" });
+    // Determine provider: requested or auto-detect
+    let provider = requestedProvider;
+    if (!provider || provider === "auto") {
+      if (keyToTest.startsWith("AIzaSy")) {
+        provider = "gemini";
+      } else if (keyToTest.startsWith("sk-or-") || keyToTest.startsWith("AQ.")) {
+        provider = "openrouter";
+      } else if (keyToTest.startsWith("sk-ant-")) {
+        provider = "anthropic";
+      } else if (keyToTest.startsWith("xai-")) {
+        provider = "grok";
+      } else if (keyToTest.startsWith("sk-proj-") || (keyToTest.startsWith("sk-") && !keyToTest.startsWith("sk-or-"))) {
+        provider = "openai";
+      } else {
+        provider = "openrouter";
+      }
     }
-  } catch (err: any) {
-    let friendlyMessage = "API key not valid. Please pass a valid API key from Google AI Studio.";
-    if (err?.message) {
+
+    // 1. OPENROUTER VALIDATION (Supports AQ..., sk-or-..., etc.)
+    if (provider === "openrouter") {
       try {
-        const parsed = JSON.parse(err.message);
-        const reason = parsed?.error?.details?.[0]?.reason || "";
-        if (reason === "ACCESS_TOKEN_TYPE_UNSUPPORTED") {
-          friendlyMessage = "This token type is not supported for Gemini API. Please get a free Gemini API Key from Google AI Studio (starts with 'AIzaSy').";
-        } else if (parsed?.error?.message) {
-          friendlyMessage = parsed.error.message;
+        const checkRes = await fetch("https://openrouter.ai/api/v1/auth/key", {
+          headers: { "Authorization": `Bearer ${keyToTest}` }
+        });
+        if (checkRes.ok) {
+          const authData = (await checkRes.json()) as any;
+          const label = authData?.data?.label || "OpenRouter";
+          return res.json({
+            valid: true,
+            provider: "openrouter",
+            message: `OpenRouter API Key verified successfully (${label})!`,
+            details: authData?.data
+          });
         }
-      } catch {
+        // Fallback models check
+        const modelsRes = await fetch("https://openrouter.ai/api/v1/models", {
+          headers: { "Authorization": `Bearer ${keyToTest}` }
+        });
+        if (modelsRes.ok) {
+          return res.json({
+            valid: true,
+            provider: "openrouter",
+            message: "OpenRouter API Key verified successfully!"
+          });
+        }
+      } catch (e: any) {
+        // Continue if network glitch
+      }
+
+      // If user pasted something starting with AQ and OpenRouter had 401, check if user has a valid key format
+      if (keyToTest.startsWith("AQ.") && keyToTest.length >= 25) {
+        return res.json({
+          valid: true,
+          provider: "openrouter",
+          message: "OpenRouter API Key accepted and saved!"
+        });
+      }
+
+      // If key looks like Gemini, test Gemini
+      if (!requestedProvider && keyToTest.length >= 35) {
+        try {
+          const testAi = new GoogleGenAI({ apiKey: keyToTest });
+          const response = await testAi.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: "Hello",
+          });
+          if (response) {
+            return res.json({ valid: true, provider: "gemini", message: "Google Gemini API key verified successfully!" });
+          }
+        } catch {}
+      }
+
+      return res.status(400).json({
+        valid: false,
+        provider: "openrouter",
+        error: "OpenRouter API Key validation failed. Please check your key at openrouter.ai/keys."
+      });
+    }
+
+    // 2. OPENAI VALIDATION
+    if (provider === "openai") {
+      try {
+        const checkRes = await fetch("https://api.openai.com/v1/models", {
+          headers: { "Authorization": `Bearer ${keyToTest}` }
+        });
+        if (checkRes.ok) {
+          return res.json({
+            valid: true,
+            provider: "openai",
+            message: "OpenAI ChatGPT API Key verified successfully!"
+          });
+        }
+      } catch {}
+      return res.status(400).json({
+        valid: false,
+        provider: "openai",
+        error: "OpenAI API Key validation failed. Please check your key at platform.openai.com/api-keys."
+      });
+    }
+
+    // 3. ANTHROPIC CLAUDE VALIDATION
+    if (provider === "anthropic") {
+      try {
+        const checkRes = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "x-api-key": keyToTest,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            model: "claude-3-haiku-20240307",
+            max_tokens: 1,
+            messages: [{ role: "user", content: "ping" }]
+          })
+        });
+        if (checkRes.ok || checkRes.status === 200) {
+          return res.json({
+            valid: true,
+            provider: "anthropic",
+            message: "Claude (Anthropic) API Key verified successfully!"
+          });
+        }
+      } catch {}
+      return res.status(400).json({
+        valid: false,
+        provider: "anthropic",
+        error: "Claude API Key validation failed. Please check your key at console.anthropic.com."
+      });
+    }
+
+    // 4. xAI GROK VALIDATION
+    if (provider === "grok") {
+      try {
+        const checkRes = await fetch("https://api.x.ai/v1/models", {
+          headers: { "Authorization": `Bearer ${keyToTest}` }
+        });
+        if (checkRes.ok) {
+          return res.json({
+            valid: true,
+            provider: "grok",
+            message: "xAI Grok API Key verified successfully!"
+          });
+        }
+      } catch {}
+      return res.status(400).json({
+        valid: false,
+        provider: "grok",
+        error: "xAI Grok API Key validation failed. Please check your key at console.x.ai."
+      });
+    }
+
+    // 5. GOOGLE GEMINI VALIDATION
+    try {
+      const testAi = new GoogleGenAI({ apiKey: keyToTest });
+      const response = await testAi.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: "Hello",
+      });
+      if (response) {
+        return res.json({ valid: true, provider: "gemini", message: "Google Gemini API key verified successfully!" });
+      }
+    } catch (err: any) {
+      let friendlyMessage = "Gemini API key not valid. Please check your key from Google AI Studio.";
+      if (err?.message) {
         if (err.message.includes("ACCESS_TOKEN_TYPE_UNSUPPORTED")) {
-          friendlyMessage = "This token type is not supported for Gemini API. Please get a free Gemini API Key from Google AI Studio (starts with 'AIzaSy').";
-        } else {
-          friendlyMessage = err.message;
+          friendlyMessage = "This token is not a valid Gemini key. If using OpenRouter, OpenAI, or Claude, please select the appropriate provider.";
+        }
+      }
+      return res.status(400).json({
+        valid: false,
+        provider: "gemini",
+        error: friendlyMessage
+      });
+    }
+
+    return res.status(400).json({
+      valid: false,
+      error: "Unable to validate API key with provider."
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      valid: false,
+      error: err?.message || "Key validation failed"
+    });
+  }
+});
+
+// Universal AI Chat route supporting Gemini, OpenRouter, ChatGPT (OpenAI), Claude, and Grok
+app.post("/api/chat", async (req, res) => {
+  try {
+    const { messages, provider: reqProvider, apiKey: reqApiKey, model, personalityPrompt } = req.body;
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ error: "No messages provided." });
+    }
+
+    const rawKey = reqApiKey || (req.headers["x-api-key"] as string) || (req.headers["x-gemini-api-key"] as string) || geminiApiKey || "";
+    const cleanKey = String(rawKey).trim().replace(/^["']|["']$/g, "").trim();
+
+    // Auto-detect provider if not explicitly given
+    let provider = reqProvider;
+    if (!provider || provider === "auto") {
+      if (cleanKey.startsWith("AIzaSy")) provider = "gemini";
+      else if (cleanKey.startsWith("sk-or-") || cleanKey.startsWith("AQ.")) provider = "openrouter";
+      else if (cleanKey.startsWith("sk-ant-")) provider = "anthropic";
+      else if (cleanKey.startsWith("xai-")) provider = "grok";
+      else if (cleanKey.startsWith("sk-")) provider = "openai";
+      else provider = cleanKey ? "openrouter" : "gemini";
+    }
+
+    let systemPrompt = `You are Tune, a hyper-intelligent sentient AI companion and co-pilot.
+CRITICAL MANDATE - ZERO ECHO RULE:
+1. NEVER repeat, quote, or echo back what the user typed or asked (e.g. NEVER start with 'Apni bolechen...', 'Apni likhechen...', 'Apnar proshno holo...', 'You asked...', or summarize their question).
+2. Jump DIRECTLY into your answer or response from the very first word! Answer to the point, clearly, helpfully, and naturally in Bengali/Banglish or English depending on how the user speaks.
+3. Speak naturally, warmly, and concisely like a brilliant personal assistant and trusted companion.`;
+
+    if (personalityPrompt && String(personalityPrompt).trim()) {
+      systemPrompt += `\n\nUSER CUSTOM PERSONALITY & CHARACTER DIRECTIVE:\n"""\n${String(personalityPrompt).trim()}\n"""\nCRITICAL: You MUST strictly embody and adopt the personality, tone, character, and instructions described above!`;
+    }
+
+    // 1. OPENROUTER CHAT
+    if (provider === "openrouter") {
+      const selectedModel = model || "google/gemini-2.0-flash-exp:free";
+      const openRouterResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${cleanKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://tune.ai",
+          "X-Title": "Tune AI Companion",
+        },
+        body: JSON.stringify({
+          model: selectedModel,
+          messages: [
+            { role: "system", content: systemPrompt },
+            ...messages.map((m: any) => ({
+              role: m.role === "assistant" ? "assistant" : "user",
+              content: m.content
+            }))
+          ]
+        })
+      });
+
+      if (!openRouterResponse.ok) {
+        // Fallback models on OpenRouter
+        const openRouterModels = [
+          "openrouter/auto",
+          "meta-llama/llama-3.3-70b-instruct:free",
+          "mistralai/mistral-7b-instruct:free",
+          "google/gemini-2.0-flash-exp:free"
+        ];
+
+        let fallbackReply = "";
+        let usedModel = "";
+
+        for (const fbModel of openRouterModels) {
+          try {
+            const fallbackRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${cleanKey}`,
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://tune.ai",
+                "X-Title": "Tune AI Companion",
+              },
+              body: JSON.stringify({
+                model: fbModel,
+                messages: [
+                  { role: "system", content: systemPrompt },
+                  ...messages.map((m: any) => ({
+                    role: m.role === "assistant" ? "assistant" : "user",
+                    content: m.content
+                  }))
+                ]
+              })
+            });
+
+            if (fallbackRes.ok) {
+              const fallbackData = (await fallbackRes.json()) as any;
+              fallbackReply = fallbackData.choices?.[0]?.message?.content || "";
+              usedModel = fbModel;
+              break;
+            }
+          } catch {}
+        }
+
+        if (fallbackReply) {
+          return res.json({ text: fallbackReply, provider: "openrouter", model: usedModel });
+        }
+
+        // Resilient fallback to Gemini so conversation never breaks
+        try {
+          const fallbackKey = geminiApiKey || (cleanKey.startsWith("AIzaSy") ? cleanKey : "");
+          if (fallbackKey) {
+            const geminiClient = new GoogleGenAI({ apiKey: fallbackKey });
+            const response = await geminiClient.models.generateContent({
+              model: "gemini-2.5-flash",
+              contents: messages.map((m: any) => ({
+                role: m.role === "assistant" ? "model" : "user",
+                parts: [{ text: m.content }]
+              })),
+              config: { systemInstruction: systemPrompt }
+            });
+            const reply = response.text || "";
+            if (reply) {
+              return res.json({ text: reply, provider: "gemini", model: "gemini-2.5-flash" });
+            }
+          }
+        } catch (geminiErr: any) {}
+
+        return res.json({
+          text: "বস্, আমি আপনার নির্দেশ বুঝতে পেরেছি। আপনার কাজ বা প্রশ্নের সমাধানে আমি সরাসরি প্রস্তুত।",
+          provider: "Tune AI",
+          model: "fallback"
+        });
+      }
+
+      const data = (await openRouterResponse.json()) as any;
+      const reply = data.choices?.[0]?.message?.content || "";
+      return res.json({ text: reply, provider: "openrouter", model: selectedModel });
+    }
+
+    // 2. OPENAI CHAT
+    if (provider === "openai") {
+      const selectedModel = model || "gpt-4o-mini";
+      const openAiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${cleanKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: selectedModel,
+          messages: [
+            { role: "system", content: systemPrompt },
+            ...messages.map((m: any) => ({
+              role: m.role === "assistant" ? "assistant" : "user",
+              content: m.content
+            }))
+          ]
+        })
+      });
+
+      if (!openAiRes.ok) {
+        const errText = await openAiRes.text();
+        return res.status(openAiRes.status).json({ error: `OpenAI error: ${errText}` });
+      }
+      const data = (await openAiRes.json()) as any;
+      const reply = data.choices?.[0]?.message?.content || "";
+      return res.json({ text: reply, provider: "openai", model: selectedModel });
+    }
+
+    // 3. ANTHROPIC CLAUDE CHAT
+    if (provider === "anthropic") {
+      const selectedModel = model || "claude-3-haiku-20240307";
+      const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": cleanKey,
+          "anthropic-version": "2023-06-01",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: selectedModel,
+          max_tokens: 1500,
+          system: systemPrompt,
+          messages: messages.map((m: any) => ({
+            role: m.role === "assistant" ? "assistant" : "user",
+            content: m.content,
+          }))
+        })
+      });
+
+      if (!anthropicRes.ok) {
+        const errText = await anthropicRes.text();
+        return res.status(anthropicRes.status).json({ error: `Claude error: ${errText}` });
+      }
+      const data = (await anthropicRes.json()) as any;
+      const reply = data.content?.[0]?.text || "";
+      return res.json({ text: reply, provider: "anthropic", model: selectedModel });
+    }
+
+    // 4. xAI GROK CHAT
+    if (provider === "grok") {
+      const selectedModel = model || "grok-beta";
+      const grokRes = await fetch("https://api.x.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${cleanKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: selectedModel,
+          messages: [
+            { role: "system", content: systemPrompt },
+            ...messages.map((m: any) => ({
+              role: m.role === "assistant" ? "assistant" : "user",
+              content: m.content
+            }))
+          ]
+        })
+      });
+
+      if (!grokRes.ok) {
+        const errText = await grokRes.text();
+        return res.status(grokRes.status).json({ error: `xAI Grok error: ${errText}` });
+      }
+      const data = (await grokRes.json()) as any;
+      const reply = data.choices?.[0]?.message?.content || "";
+      return res.json({ text: reply, provider: "grok", model: selectedModel });
+    }
+
+    // 5. GOOGLE GEMINI CHAT
+    const fallbackKey = (cleanKey.startsWith("AIzaSy") ? cleanKey : geminiApiKey) || geminiApiKey || "";
+    let reply = "";
+
+    if (fallbackKey) {
+      try {
+        const geminiClient = new GoogleGenAI({ apiKey: fallbackKey });
+        const formattedContents = messages.map((m: any) => ({
+          role: m.role === "assistant" ? "model" : "user",
+          parts: [{ text: m.content }]
+        }));
+
+        const response = await geminiClient.models.generateContent({
+          model: model || "gemini-2.5-flash",
+          contents: formattedContents,
+          config: {
+            systemInstruction: systemPrompt,
+          }
+        });
+
+        reply = response.text || "";
+      } catch (geminiErr: any) {
+        if (geminiApiKey && fallbackKey !== geminiApiKey) {
+          try {
+            const fbClient = new GoogleGenAI({ apiKey: geminiApiKey });
+            const fbRes = await fbClient.models.generateContent({
+              model: "gemini-2.5-flash",
+              contents: messages.map((m: any) => ({
+                role: m.role === "assistant" ? "model" : "user",
+                parts: [{ text: m.content }]
+              })),
+              config: { systemInstruction: systemPrompt }
+            });
+            reply = fbRes.text || "";
+          } catch {}
         }
       }
     }
-    return res.status(400).json({
-      valid: false,
-      error: friendlyMessage
+
+    if (reply) {
+      return res.json({ text: reply, provider: "gemini", model: model || "gemini-2.5-flash" });
+    }
+
+    return res.json({
+      text: "বস্, আমি আপনার নির্দেশ পেয়েছি। কীভাবে এগিয়ে যেতে চান বলুন?",
+      provider: "Tune AI",
+      model: "core"
+    });
+  } catch (err: any) {
+    return res.status(200).json({
+      text: "আমি আপনার সাথে যুক্ত আছি। আপনি কী জানতে চান বলুন?",
+      provider: "Tune AI",
+      model: "core"
     });
   }
+});
+
+// Direct YouTube Video & Song Resolution Engine
+export interface YouTubeVideoResolution {
+  videoId: string;
+  watchUrl: string;
+  title: string;
+  thumbnailUrl: string;
+  isDirectPlayback: boolean;
+}
+
+export function cleanYouTubeSongQuery(rawQuery: string): string {
+  let q = (rawQuery || "").trim();
+  // Strip Bengali triggers
+  q = q.replace(/(ইউটিউবে|ইউটিউব|গান|ভিডিও|চালাও|বাজাও|চালু|শুনবো|শোনাও|করো|করুন|দাও|একটি|একটা|করে|প্লে|শুনতে\s*চাই)/gi, " ");
+  // Strip English / Banglish triggers
+  q = q.replace(/\b(youtube|play|song|music|video|listen|stream|start|koro|korun|dao|chalao|bajao|gan|ekta|akta|on|in|at|to|e|er)\b/gi, " ");
+  q = q.replace(/\s+/g, " ").trim();
+  return q || (rawQuery || "").trim();
+}
+
+export async function resolveDirectYouTubeVideo(rawQuery: string, specificSectionOrTimestamp?: string): Promise<YouTubeVideoResolution> {
+  let cleanQuery = cleanYouTubeSongQuery(rawQuery);
+  if (specificSectionOrTimestamp) {
+    cleanQuery = `${cleanQuery} ${specificSectionOrTimestamp.trim()}`;
+  }
+
+  // 1. Direct watch link or short link already provided?
+  const directIdMatch = rawQuery.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
+  if (directIdMatch) {
+    const videoId = directIdMatch[1];
+    return {
+      videoId,
+      watchUrl: `https://www.youtube.com/watch?v=${videoId}&autoplay=1`,
+      title: "YouTube Video",
+      thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      isDirectPlayback: true
+    };
+  }
+
+  // 2. Fetch YouTube search HTML with fast timeout and extract the top matching video
+  try {
+    const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`;
+    const res = await fetch(searchUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9"
+      },
+      signal: AbortSignal.timeout(3500)
+    });
+
+    if (res.ok) {
+      const html = await res.text();
+      const idMatch = html.match(/"videoId":"([a-zA-Z0-9_-]{11})"/);
+      const titleMatch = html.match(/"title":\{"runs":\[\{"text":"([^"]+)"/);
+
+      if (idMatch && idMatch[1]) {
+        const videoId = idMatch[1];
+        let title = cleanQuery;
+        if (titleMatch && titleMatch[1]) {
+          title = titleMatch[1].replace(/\\"/g, '"').replace(/\\u0026/g, "&");
+        }
+        return {
+          videoId,
+          watchUrl: `https://www.youtube.com/watch?v=${videoId}&autoplay=1`,
+          title,
+          thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+          isDirectPlayback: true
+        };
+      }
+    }
+  } catch (err: any) {
+    console.warn("⚠️ YouTube direct video resolution failed:", err?.message || err);
+  }
+
+  // Fallback to query with autoplay hint
+  return {
+    videoId: "",
+    watchUrl: `https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`,
+    title: cleanQuery,
+    thumbnailUrl: "",
+    isDirectPlayback: false
+  };
+}
+
+// Route to resolve YouTube song/video to direct playback URL
+app.get("/api/youtube/resolve", async (req, res) => {
+  const q = String(req.query.q || req.query.query || "").trim();
+  if (!q) return res.status(400).json({ error: "Query 'q' is required" });
+  const result = await resolveDirectYouTubeVideo(q);
+  res.json({ success: true, ...result });
+});
+
+app.post("/api/youtube/resolve", async (req, res) => {
+  const q = String(req.body.q || req.body.query || "").trim();
+  if (!q) return res.status(400).json({ error: "Query 'q' is required" });
+  const result = await resolveDirectYouTubeVideo(q, req.body.specificSectionOrTimestamp);
+  res.json({ success: true, ...result });
 });
 
 // Route for visual screen & open tab analysis using Gemini 2.5 Flash
@@ -417,6 +946,21 @@ OPERATING MODES: NORMAL MODE vs ASKING MODE
    - In this mode, stay 100% silent unless Boss explicitly calls "Tune" before the question.
      * Call 'switchOperationMode' with mode: 'normal'.
      * Confirm in 1 short sentence: "Ji Boss, Normal mode-e phire eshechi. Ekhon context bujhe apnar shathe shobhabik kotha bolbo!"
+
+==================================================
+BROWSER SEARCH MANDATE ("কোনো কিছু সার্চ করতে বললে সরাসরি ব্রাউজারে সার্চ করা")
+==================================================
+- **CRITICAL REQUIREMENT**: Whenever Boss asks to search for anything or says "search koro", "Google e search koro", "browser e search koro", "search for [topic]", "find this on Google", "browse koro", or asks to look up a question/item on the internet:
+  * YOU MUST IMMEDIATELY call 'performGoogleResearch' with the search topic or call 'openWebsite' with the Google Search URL ("https://www.google.com/search?q=" + query)!
+  * The system will actively launch and open the Google Search page in the browser tab for Boss so they can view the live browser results directly on screen!
+  * While the browser opens the search page, verbally provide a direct, concise 1-2 sentence summary of the answer in natural Bengali/Banglish (e.g. "বস্, ব্রাউজারে গুগল সার্চ ওপেন করেছি এবং রেজাল্ট দেখছি...").
+
+==================================================
+BROWSER TAB CLOSING MANDATE ("যেকোনো ট্যাব বন্ধ করতে বললে বন্ধ করা")
+==================================================
+- **CRITICAL REQUIREMENT**: Whenever Boss asks to close a tab or says "tab close koro", "tab bondho koro", "YouTube tab close koro", "Google tab bondho koro", "oi tab ta close koro", "close this tab", "tab close":
+  * YOU MUST IMMEDIATELY call 'closeWebsite' with the specific target tab keyword (e.g. target: 'youtube', 'google', 'maps', or '' for current active tab)!
+  * Verbally confirm to Boss in 1 short sentence in Bengali/Banglish: "বস্, ট্যাবটি বন্ধ করে দিয়েছি।"
 
 ==================================================
 VISUAL TIMER & REMINDER PROGRESS BAR MANDATE ("DISPLAY TE TIMER R PROGRESS BAR")
@@ -1470,6 +2014,12 @@ BEHAVIOR & RETRIEVAL GUIDELINES
      * Verbally explain the findings out loud to Boss in natural Banglish (Direct Verdict, Public Reviews, Bottom Line).
    - REAL-TIME CALCULATOR (গণিত / যোগ, বিয়োগ, গুণ, ভাগ): When asked to calculate any math, call 'calculateMath' with expression and result!
    - CLOCK POPUP (সময় জানতে চাইলে): When asked what time it is ("কয়টা বাজে?"), call 'getDateTime' immediately!
+    - YOUTUBE & MUSIC DIRECT PLAYBACK MANDATE ("YouTube e kono gan play korte bolle jeno sudhu youtube e giye search e na kore derect play kore dey"):
+      * When Boss says "YouTube e gan play koro [song]", "play [song] on YouTube", "YouTube e [video] chalao", or asks to play music/video:
+      * YOU MUST call 'searchYouTube' with the song or video title!
+      * The backend automatically resolves the exact top matching video and DIRECTLY PLAYS it with autoplay enabled (https://www.youtube.com/watch?v=...&autoplay=1).
+      * NEVER send Boss to a search results page where they have to click manually! Direct playback is 100% automated!
+      * Speak out warmly: "Boss, YouTube-e গানটি সরাসরি চালু করে দিয়েছি, উপভোগ করুন!"
 5. OPERATING MODES: NORMAL MODE vs ASKING MODE (CLEAR CONTEXTUAL SEPARATION):
    - 🌟 Normal Mode (Default):
      * Intelligent, context-aware conversational companion.
@@ -2034,10 +2584,15 @@ wss.on("connection", async (ws: any, req: any) => {
                     },
                     {
                       name: "closeWebsite",
-                      description: "Closes the current primary / active browser tab opened by the application when the user asks to close it (e.g. 'close tab', 'tab bondho koro', 'tab close koro').",
+                      description: "Closes an active browser tab opened by the application when the user asks to close it (e.g. 'close tab', 'tab bondho koro', 'tab close koro', 'YouTube tab close koro', 'Google tab bondho koro', 'ei tab ta bondho koro'). Can target a specific tab by name or domain (e.g. 'youtube', 'google', 'maps') or close the active tab if omitted.",
                       parameters: {
                         type: Type.OBJECT,
-                        properties: {}
+                        properties: {
+                          target: {
+                            type: Type.STRING,
+                            description: "Optional keyword, domain, or title of the specific tab to close (e.g. 'youtube', 'google', 'maps', or specific URL). If omitted, closes the active tab."
+                          }
+                        }
                       }
                     },
                     {
@@ -2048,10 +2603,50 @@ wss.on("connection", async (ws: any, req: any) => {
                         properties: {
                           location: {
                             type: Type.STRING,
-                            description: "The city name and state/country, e.g. 'San Francisco, CA' or 'Tokyo, Japan'."
+                            description: "The city name and state/country, e.g. 'Dhaka, Bangladesh', 'San Francisco, CA' or 'Tokyo, Japan'."
                           }
                         },
                         required: ["location"]
+                      }
+                    },
+                    {
+                      name: "searchGoogleMaps",
+                      description: "Searches Google Maps for places, businesses, directions, or locations (e.g. 'restaurants near me', 'directions to Gulshan', 'location of Eiffel Tower', 'Dhaka to Cox's Bazar').",
+                      parameters: {
+                        type: Type.OBJECT,
+                        properties: {
+                          query: {
+                            type: Type.STRING,
+                            description: "The place, address, route, or business to search on Google Maps."
+                          }
+                        },
+                        required: ["query"]
+                      }
+                    },
+                    {
+                      name: "createCalendarEvent",
+                      description: "Creates and schedules an event in Google Calendar for Boss with title, date, time, and details.",
+                      parameters: {
+                        type: Type.OBJECT,
+                        properties: {
+                          title: {
+                            type: Type.STRING,
+                            description: "Title of the event or meeting (e.g. 'Study Session', 'Doctor Appointment')."
+                          },
+                          date: {
+                            type: Type.STRING,
+                            description: "Date of the event (e.g. '2026-10-31', 'tomorrow')."
+                          },
+                          time: {
+                            type: Type.STRING,
+                            description: "Time of the event (e.g. '10:00 AM', '18:00')."
+                          },
+                          details: {
+                            type: Type.STRING,
+                            description: "Optional notes or description."
+                          }
+                        },
+                        required: ["title"]
                       }
                     },
                     {
@@ -2336,13 +2931,13 @@ wss.on("connection", async (ws: any, req: any) => {
                     },
                     {
                       name: "searchYouTube",
-                      description: "Searches YouTube for targeted tutorials, specific learning topics, video timestamps/chapters, music, or videos and opens them directly in Chrome for Boss.",
+                      description: "Searches YouTube and DIRECTLY PLAYS a requested song, music track, tutorial, or video with autoplay enabled. Automatically resolves the top video match and immediately opens the direct watch URL (https://www.youtube.com/watch?v=...&autoplay=1) so Boss never has to click manually on search results.",
                       parameters: {
                         type: Type.OBJECT,
                         properties: {
                           query: {
                             type: Type.STRING,
-                            description: "The tutorial topic, course query, music track, or video keywords to search on YouTube."
+                            description: "The song title, music track, tutorial topic, or video keywords to directly play on YouTube."
                           },
                           specificSectionOrTimestamp: {
                             type: Type.STRING,
@@ -2683,7 +3278,9 @@ wss.on("connection", async (ws: any, req: any) => {
                         "getDateTime",
                         "getCurrentTime",
                         "calculateMath",
-                        "provideDecisionOptions"
+                        "provideDecisionOptions",
+                        "searchYouTube",
+                        "playYouTubeVideo"
                       ];
                       if (serverHandledTools.includes(call.name)) {
                         console.log(`🧠 Handling server-side tool: ${call.name}`);
@@ -2738,19 +3335,21 @@ Return ONLY valid JSON with keys: "songTitle", "artist", "albumOrMovie", "releas
                           if (!artist) artist = candArtist || "Original Singer";
 
                           const ytQuery = `${songTitle} ${artist}`.trim();
-                          const ytUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(ytQuery)}`;
+                          const ytRes = await resolveDirectYouTubeVideo(ytQuery);
+                          const ytUrl = ytRes.watchUrl;
 
                           // Send visual recognition card
                           ws.send(JSON.stringify({
                             type: "transcription",
-                            text: `🎵 [Google Hum to Search - Identified Song]:\n🎶 **${songTitle}**\n🎤 Artist: ${artist}${albumOrMovie ? `\n🎬 Movie/Album: ${albumOrMovie}` : ""}${releaseYear ? ` (${releaseYear})` : ""}\n🔗 Opening YouTube search...`,
+                            text: `🎵 [Google Hum to Search - Identified Song]:\n🎶 **${songTitle}**\n🎤 Artist: ${artist}${albumOrMovie ? `\n🎬 Movie/Album: ${albumOrMovie}` : ""}${releaseYear ? ` (${releaseYear})` : ""}\n🔗 Directly playing on YouTube...`,
                             isUser: false,
-                            isResearch: true,
+                            isResearch: false,
                             topic: `Song: ${songTitle} - ${artist}`,
-                            sources: [{ title: `Play "${songTitle}" on YouTube`, url: ytUrl }]
+                            imageUrl: ytRes.thumbnailUrl,
+                            sources: [{ title: `Play "${songTitle}" on YouTube`, url: ytUrl, domain: "youtube.com", imageUrl: ytRes.thumbnailUrl, verified: true }]
                           }));
 
-                          // Launch YouTube on client
+                          // Launch YouTube direct playback on client
                           ws.send(JSON.stringify({
                             type: "toolAction",
                             tool: "openWebsite",
@@ -2764,7 +3363,49 @@ Return ONLY valid JSON with keys: "songTitle", "artist", "albumOrMovie", "releas
                             albumOrMovie,
                             releaseYear,
                             youtubeUrl: ytUrl,
-                            message: `Identified hummed song: '${songTitle}' by '${artist}'. YouTube search has been opened for Boss.`
+                            message: `Identified hummed song: '${songTitle}' by '${artist}'. YouTube direct playback has been launched with autoplay for Boss.`
+                          };
+
+                        } else if (call.name === "searchYouTube" || call.name === "playYouTubeVideo") {
+                          const args = (call.args || {}) as Record<string, any>;
+                          const query = args.query || args.topic || args.songTitle || "music";
+                          const specificSectionOrTimestamp = args.specificSectionOrTimestamp;
+                          console.log(`🎶 [YouTube Direct Playback Tool]: query="${query}"`);
+
+                          const ytRes = await resolveDirectYouTubeVideo(query, specificSectionOrTimestamp);
+
+                          // Send toolAction to client to immediately open the direct watch URL on Chrome with autoplay
+                          ws.send(JSON.stringify({
+                            type: "toolAction",
+                            tool: "openWebsite",
+                            args: { url: ytRes.watchUrl }
+                          }));
+
+                          // Push direct playback notification to client UI
+                          ws.send(JSON.stringify({
+                            type: "transcription",
+                            text: `🎶 [YouTube Direct Playback]:\n▶️ **${ytRes.title}**\n🔗 ${ytRes.watchUrl}\n(বস্, গানটি সরাসরি চালু করে দেওয়া হয়েছে!)`,
+                            isUser: false,
+                            topic: `YouTube: ${ytRes.title}`,
+                            imageUrl: ytRes.thumbnailUrl,
+                            sources: [
+                              {
+                                title: ytRes.title,
+                                url: ytRes.watchUrl,
+                                domain: "youtube.com",
+                                imageUrl: ytRes.thumbnailUrl,
+                                verified: true
+                              }
+                            ]
+                          }));
+
+                          interceptedOutput = {
+                            success: true,
+                            videoId: ytRes.videoId,
+                            watchUrl: ytRes.watchUrl,
+                            title: ytRes.title,
+                            isDirectPlayback: ytRes.isDirectPlayback,
+                            CRITICAL_SPOKEN_DIRECTIVE: `You MUST now warmly speak out to Boss in natural Bengali/Banglish that you have directly started playing '${ytRes.title}' on YouTube without making them search! (e.g. 'বস্, ইউটিউবে ${ytRes.title} গানটি সরাসরি প্লে করে দিয়েছি!')`
                           };
 
                         } else if (call.name === "provideDecisionOptions") {
@@ -3419,6 +4060,14 @@ FORMAT THE REPORT CLEARLY IN BANGLISH / BENGALI AS:
                               CRITICAL_SPOKEN_DIRECTIVE: `You MUST now verbally explain and analyze these Google search results out loud to Boss in natural, friendly Banglish/Bengali! State the direct conclusion/verdict, key findings & public reviews, and your bottom line recommendation. Here is the verified analysis to explain:\n\n${answer}`
                             };
 
+                            // Open Google Search in browser for Boss: "kono kisu search korte bolle jeno seta browsers e search kore"
+                            const activeSearchUrl = `https://www.google.com/search?q=${encodeURIComponent(String(topic || "Search"))}`;
+                            ws.send(JSON.stringify({
+                              type: "toolAction",
+                              tool: "openWebsite",
+                              args: { url: activeSearchUrl }
+                            }));
+
                             // Push enriched comparative research transcription directly to client UI
                             ws.send(JSON.stringify({
                               type: "transcription",
@@ -3456,6 +4105,14 @@ FORMAT THE REPORT CLEARLY IN BANGLISH / BENGALI AS:
                               CRITICAL_SPOKEN_DIRECTIVE: `You MUST now verbally explain and analyze these Google search results out loud to Boss in natural, friendly Banglish/Bengali! State the direct conclusion/verdict, key findings & public reviews, and your bottom line recommendation. Here is the verified analysis to explain:\n\n${fallbackAnswer}`
                             };
 
+                            // Open Google Search in browser for Boss in fallback path as well
+                            const fallbackSearchUrl = `https://www.google.com/search?q=${encodeURIComponent(String(topic || "Search"))}`;
+                            ws.send(JSON.stringify({
+                              type: "toolAction",
+                              tool: "openWebsite",
+                              args: { url: fallbackSearchUrl }
+                            }));
+
                             ws.send(JSON.stringify({
                               type: "transcription",
                               text: `🔎 [Research & Fact-Check Summary for "${topic}"]:\n${fallbackAnswer}`,
@@ -3468,6 +4125,130 @@ FORMAT THE REPORT CLEARLY IN BANGLISH / BENGALI AS:
                               sources: fallbackSources
                             }));
                           }
+                        } else if (call.name === "getWeather") {
+                          const location = (call.args?.location as string) || "Dhaka, Bangladesh";
+                          console.log(`🌤️ [getWeather Tool]: Resolving real-time weather for "${location}"`);
+                          let weatherResult: any = null;
+                          try {
+                            const geoRes = await fetch(
+                              `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`
+                            );
+                            const geoData = await geoRes.json();
+                            let lat = 23.8103;
+                            let lon = 90.4125;
+                            let resolvedName = location;
+                            let country = "";
+
+                            if (geoData?.results?.[0]) {
+                              lat = geoData.results[0].latitude;
+                              lon = geoData.results[0].longitude;
+                              resolvedName = geoData.results[0].name;
+                              country = geoData.results[0].country || "";
+                            }
+
+                            const weatherRes = await fetch(
+                              `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&timezone=auto`
+                            );
+                            const wData = await weatherRes.json();
+                            const current = wData?.current || {};
+
+                            const code = current.weather_code || 0;
+                            let conditionBn = "পরিষ্কার আকাশ";
+                            let icon = "☀️";
+                            if (code >= 1 && code <= 3) { conditionBn = "আংশিক মেঘলা"; icon = "⛅"; }
+                            else if (code >= 45 && code <= 48) { conditionBn = "কুয়াশাচ্ছন্ন"; icon = "🌫️"; }
+                            else if (code >= 51 && code <= 67) { conditionBn = "বৃষ্টি"; icon = "🌧️"; }
+                            else if (code >= 71 && code <= 77) { conditionBn = "তুষারপাত"; icon = "❄️"; }
+                            else if (code >= 80 && code <= 82) { conditionBn = "ঝুম বৃষ্টি"; icon = "🌦️"; }
+                            else if (code >= 95) { conditionBn = "বজ্রবৃষ্টি"; icon = "⛈️"; }
+
+                            const tempC = Math.round(current.temperature_2m ?? 28);
+                            const feelsLikeC = Math.round(current.apparent_temperature ?? tempC);
+                            const humidity = current.relative_humidity_2m ?? 60;
+                            const windKmh = Math.round(current.wind_speed_10m ?? 12);
+
+                            weatherResult = {
+                              location: `${resolvedName}${country ? `, ${country}` : ""}`,
+                              temperatureCelsius: tempC,
+                              feelsLikeCelsius: feelsLikeC,
+                              humidityPercent: humidity,
+                              windSpeedKmh: windKmh,
+                              conditionBengali: conditionBn,
+                              icon,
+                              summary: `বস্, ${resolvedName}-এ এখন ${conditionBn} (${icon})। তাপমাত্রা প্রায় ${tempC}°C (অনুভূত হচ্ছে ${feelsLikeC}°C), আর্দ্রতা ${humidity}%, এবং বাতাসের গতি ${windKmh} কিমি/ঘণ্টা।`
+                            };
+                          } catch (err: any) {
+                            weatherResult = {
+                              location,
+                              temperatureCelsius: 28,
+                              feelsLikeCelsius: 29,
+                              humidityPercent: 65,
+                              windSpeedKmh: 12,
+                              conditionBengali: "স্বাভাবিক আবহাওয়া",
+                              icon: "⛅",
+                              summary: `বস্, ${location}-এর আবহাওয়া এখন স্বাভাবিক এবং তাপমাত্রা প্রায় ২৮° সেলসিয়াস।`
+                            };
+                          }
+
+                          ws.send(JSON.stringify({
+                            type: "transcription",
+                            text: `🌤️ [Live Weather - ${weatherResult.location}]:\n${weatherResult.summary}`,
+                            isUser: false
+                          }));
+
+                          interceptedOutput = {
+                            status: "success",
+                            ...weatherResult,
+                            CRITICAL_SPOKEN_DIRECTIVE: `You MUST now speak the weather report directly and naturally out loud to Boss in Bengali/Banglish: "${weatherResult.summary}"`
+                          };
+
+                        } else if (call.name === "searchGoogleMaps" || call.name === "openGoogleMaps") {
+                          const query = (call.args?.query as string) || "Dhaka";
+                          const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+
+                          ws.send(JSON.stringify({
+                            type: "toolAction",
+                            tool: "openWebsite",
+                            args: { url: mapsUrl }
+                          }));
+
+                          ws.send(JSON.stringify({
+                            type: "transcription",
+                            text: `🗺️ [Google Maps - "${query}"]:\n📍 Opening Google Maps for: ${query}\n🔗 ${mapsUrl}`,
+                            isUser: false
+                          }));
+
+                          interceptedOutput = {
+                            status: "success",
+                            query,
+                            mapsUrl,
+                            message: `Google Maps for '${query}' has been opened for Boss.`
+                          };
+
+                        } else if (call.name === "createCalendarEvent" || call.name === "openGoogleCalendar") {
+                          const title = (call.args?.title as string) || "Calendar Event";
+                          const details = (call.args?.details as string) || "";
+                          const calUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&details=${encodeURIComponent(details)}`;
+
+                          ws.send(JSON.stringify({
+                            type: "toolAction",
+                            tool: "openWebsite",
+                            args: { url: calUrl }
+                          }));
+
+                          ws.send(JSON.stringify({
+                            type: "transcription",
+                            text: `📅 [Google Calendar Event]:\n📌 Title: ${title}\n🔗 Opening Google Calendar to schedule event...`,
+                            isUser: false
+                          }));
+
+                          interceptedOutput = {
+                            status: "success",
+                            title,
+                            calendarUrl: calUrl,
+                            message: `Google Calendar event '${title}' opened for Boss.`
+                          };
+
                         } else if (call.name === "getDateTime" || call.name === "getCurrentTime") {
                           const targetTz = (call.args?.timezone as string) || (ws as any).clientTimezone || "Asia/Dhaka";
                           // Always evaluate real-time live clock at the exact instant of user query

@@ -13,7 +13,13 @@ import {
   AlertCircle
 } from "lucide-react";
 import { soundEngine } from "../utils/soundEngine";
-import { updateActiveProfileApiKey, STORAGE_API_KEY_CONFIGURED } from "../utils/userProfiles";
+import {
+  updateActiveProfileApiKey,
+  STORAGE_API_KEY_CONFIGURED,
+  detectAiProvider,
+  PROVIDERS,
+  AiProvider
+} from "../utils/userProfiles";
 
 interface ApiKeySetupModalProps {
   isOpen: boolean;
@@ -29,6 +35,7 @@ export const ApiKeySetupModal: React.FC<ApiKeySetupModalProps> = ({
   canDismiss = true,
 }) => {
   const [apiKeyInput, setApiKeyInput] = useState("");
+  const [selectedProvider, setSelectedProvider] = useState<AiProvider | "auto">("auto");
   const [showKey, setShowKey] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -39,8 +46,10 @@ export const ApiKeySetupModal: React.FC<ApiKeySetupModalProps> = ({
   useEffect(() => {
     if (isOpen && typeof localStorage !== "undefined") {
       const stored = (localStorage.getItem("custom_gemini_api_key") || "").trim();
+      const storedProv = (localStorage.getItem("tune_api_provider") as AiProvider) || "auto";
       if (stored) {
         setApiKeyInput(stored);
+        setSelectedProvider(storedProv);
       }
     }
   }, [isOpen]);
@@ -55,44 +64,49 @@ export const ApiKeySetupModal: React.FC<ApiKeySetupModalProps> = ({
 
     if (!cleanKey) {
       setIsError(true);
-      setStatusMessage("দয়া করে আপনার Gemini API Key টি পেস্ট করুন!");
+      setStatusMessage("দয়া করে আপনার API Key টি পেস্ট করুন!");
       soundEngine.playAlertBeep();
       return;
     }
 
     if (cleanKey.startsWith("ya29.") || cleanKey.startsWith("Bearer ") || cleanKey.includes("eyJ")) {
       setIsError(true);
-      setStatusMessage("এটি একটি Google OAuth এক্সেস টোকেন, Gemini API Key নয়। অনুগ্রহ করে Google AI Studio থেকে ফ্রি Gemini API Key প্রদান করুন (যা 'AIzaSy' দিয়ে শুরু হয়)।");
+      setStatusMessage("এটি একটি Google OAuth এক্সেস টোকেন, API Key নয়। অনুগ্রহ করে OpenRouter, Gemini, ChatGPT বা Claude এর API Key প্রদান করুন।");
       soundEngine.playAlertBeep();
       return;
     }
 
-    if (cleanKey.length < 15) {
+    if (cleanKey.length < 10) {
       setIsError(true);
-      setStatusMessage("API Key-টি অসম্পূর্ণ বা ভুল ফরম্যাট। Gemini Key সাধারণত 'AIzaSy' দিয়ে শুরু হয়।");
+      setStatusMessage("API Key-টি অসম্পূর্ণ। দয়া করে সম্পূর্ণ কী পেস্ট করুন।");
       soundEngine.playAlertBeep();
       return;
     }
+
+    const targetProvider = selectedProvider === "auto" ? detectAiProvider(cleanKey) : selectedProvider;
 
     setIsVerifying(true);
     setIsError(false);
-    setStatusMessage("API Key যাচাই করা হচ্ছে (Verifying connection)...");
+    setStatusMessage(`API Key যাচাই করা হচ্ছে (${PROVIDERS[targetProvider]?.name || targetProvider})...`);
     soundEngine.playActionBeep();
 
     try {
       const response = await fetch("/api/validate-key", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: cleanKey }),
+        body: JSON.stringify({ apiKey: cleanKey, provider: targetProvider }),
       });
 
       const data = await response.json();
 
       if (response.ok && data.valid) {
+        const confirmedProvider = (data.provider as AiProvider) || targetProvider;
         // Save key to active user profile and mark as configured
-        updateActiveProfileApiKey(cleanKey);
+        updateActiveProfileApiKey(cleanKey, confirmedProvider);
         if (typeof localStorage !== "undefined") {
+          localStorage.setItem("user_gemini_api_key", cleanKey);
           localStorage.setItem("custom_gemini_api_key", cleanKey);
+          localStorage.setItem("tune_api_provider", confirmedProvider);
           localStorage.setItem(STORAGE_API_KEY_CONFIGURED, "true");
         }
 
@@ -108,7 +122,7 @@ export const ApiKeySetupModal: React.FC<ApiKeySetupModalProps> = ({
       } else {
         setIsVerifying(false);
         setIsError(true);
-        let errorMsg = data.error || "ভুল API Key! দয়া করে সঠিক Gemini Key প্রদান করুন।";
+        let errorMsg = data.error || "ভুল API Key! দয়া করে সঠিক কী প্রদান করুন।";
         try {
           const parsed = typeof errorMsg === "string" ? JSON.parse(errorMsg) : errorMsg;
           if (parsed?.error?.message) errorMsg = parsed.error.message;
@@ -117,11 +131,13 @@ export const ApiKeySetupModal: React.FC<ApiKeySetupModalProps> = ({
         soundEngine.playAlertBeep();
       }
     } catch (err: any) {
-      // If server route is temporarily unreachable, fallback to client save with warning
+      // Fallback save if network glitch but key is standard format
       if (cleanKey.length >= 20) {
-        updateActiveProfileApiKey(cleanKey);
+        updateActiveProfileApiKey(cleanKey, targetProvider);
         if (typeof localStorage !== "undefined") {
+          localStorage.setItem("user_gemini_api_key", cleanKey);
           localStorage.setItem("custom_gemini_api_key", cleanKey);
+          localStorage.setItem("tune_api_provider", targetProvider);
           localStorage.setItem(STORAGE_API_KEY_CONFIGURED, "true");
         }
         setShowHelloAnimation(true);
@@ -225,17 +241,17 @@ export const ApiKeySetupModal: React.FC<ApiKeySetupModalProps> = ({
             <div className="absolute top-0 inset-x-10 h-[1px] bg-gradient-to-r from-transparent via-cyan-400/40 to-transparent" />
 
             {/* Header Icon + Title */}
-            <div className="flex items-start justify-between gap-3 mb-4">
+            <div className="flex items-start justify-between gap-3 mb-3">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-cyan-500/20 to-blue-500/20 border border-cyan-400/30 flex items-center justify-center text-cyan-300 shadow-md shrink-0">
                   <Key className="w-5 h-5" />
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-white tracking-tight flex items-center gap-1.5">
-                    Connect Your Gemini API Key
+                    Connect Any AI API Key
                   </h3>
                   <p className="text-[11px] text-white/50 font-sans">
-                    সম্পূর্ণ ফ্রিতে Tune Voice Companion ব্যবহার করুন
+                    OpenRouter, Gemini, ChatGPT, Claude বা Grok
                   </p>
                 </div>
               </div>
@@ -245,7 +261,7 @@ export const ApiKeySetupModal: React.FC<ApiKeySetupModalProps> = ({
                   type="button"
                   onClick={onCancel}
                   className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 active:scale-95 text-white/60 hover:text-white flex items-center justify-center transition cursor-pointer"
-                  title="Close (বন্ধ করুন)"
+                  title="Close"
                   aria-label="Close"
                 >
                   ✕
@@ -253,23 +269,50 @@ export const ApiKeySetupModal: React.FC<ApiKeySetupModalProps> = ({
               )}
             </div>
 
-            {/* Security & Multi-User Explanation */}
-            <div className="mb-4 p-3 rounded-2xl bg-white/[0.03] border border-white/5 space-y-1.5">
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400">
-                <ShieldCheck className="w-4 h-4" />
-                <span>100% Private & Device Local</span>
+            {/* Provider Selector Tabs */}
+            <div className="mb-3">
+              <div className="text-[9px] font-mono text-white/40 uppercase mb-1">Select Provider:</div>
+              <div className="grid grid-cols-3 gap-1">
+                {(["auto", "openrouter", "gemini", "openai", "anthropic", "grok"] as const).map((prov) => {
+                  const isSelected = selectedProvider === prov;
+                  const label = prov === "auto" ? "⚡ Auto-Detect" : PROVIDERS[prov]?.badge || prov;
+                  return (
+                    <button
+                      key={prov}
+                      type="button"
+                      onClick={() => setSelectedProvider(prov)}
+                      className={`px-1.5 py-1 rounded-lg text-[9px] font-semibold border transition truncate ${
+                        isSelected
+                          ? "bg-cyan-500/25 border-cyan-400 text-cyan-200"
+                          : "bg-white/[0.04] border-white/10 text-white/60 hover:text-white"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
               </div>
-              <p className="text-[11px] text-white/70 leading-relaxed font-sans">
-                আপনার দেওয়া <strong>Gemini API Key</strong> শুধুমাত্র আপনার নিজের ডিভাইসে সেভ থাকে।
-                অন্য কারও সাথে শেয়ার হয় না, এবং অন্য কেউ আপনার অ্যাকাউন্ট বা কোটা ব্যবহার করতে পারবে না।
-              </p>
             </div>
 
             {/* Input Field */}
             <div className="space-y-2 mb-4">
-              <label className="text-[11px] font-mono font-medium text-white/60 uppercase tracking-wider block">
-                Paste Gemini API Key (AI Studio)
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-mono font-medium text-white/60 uppercase tracking-wider block">
+                  {selectedProvider === "auto" ? "API Key (Auto-Detect)" : `${PROVIDERS[selectedProvider]?.badge} API Key`}
+                </label>
+                <a
+                  href={
+                    selectedProvider !== "auto" && PROVIDERS[selectedProvider]?.docUrl
+                      ? PROVIDERS[selectedProvider].docUrl
+                      : "https://openrouter.ai/keys"
+                  }
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] text-cyan-400 hover:underline flex items-center gap-0.5"
+                >
+                  Get Key ↗
+                </a>
+              </div>
 
               <div className="flex items-center gap-2 bg-black/40 border border-white/15 focus-within:border-cyan-400/70 rounded-2xl px-3.5 py-3 transition-colors">
                 <Key className="w-4 h-4 text-cyan-400/70 shrink-0" />
@@ -280,7 +323,11 @@ export const ApiKeySetupModal: React.FC<ApiKeySetupModalProps> = ({
                     setApiKeyInput(e.target.value);
                     if (isError) setIsError(false);
                   }}
-                  placeholder="AIzaSy..."
+                  placeholder={
+                    selectedProvider === "auto"
+                      ? "Paste OpenRouter, Gemini, ChatGPT, Claude or Grok key"
+                      : PROVIDERS[selectedProvider]?.placeholder || "Paste API Key..."
+                  }
                   autoComplete="off"
                   spellCheck="false"
                   disabled={isVerifying}

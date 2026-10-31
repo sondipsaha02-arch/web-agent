@@ -23,6 +23,13 @@ This implementation transforms Tune into a multi-user, production-grade AI platf
 3. **Custom Personality & Behavioral Prompt**: A dedicated "Personality & Custom Instructions" prompt box in Settings allowing users to customize how Tune speaks and behaves (e.g., friendly companion, strict mentor, coding partner). If left blank, it defaults seamlessly to Tune's rich native personality.
 4. **Context-Aware Silent Startup**: Tune connects silently, avoiding unsolicited greetings, and uses recent dialogue history to maintain contextual continuity.
 5. **Multi-User Data Isolation**: User memories, chat history, and configuration are partitioned per `userId` in Firestore and protected with strict security rules.
+6. **Automatic Browser Search & Targeted Tab Closing**:
+   - Searches immediately launch in Google Search in the browser on user command.
+   - Fixed search card title and content so it displays the real query and conclusion rather than the tool name (`openWebsite`).
+   - Added specific tab closing capability (e.g. closing YouTube, Google, Maps, or current tab on command without blocking permission popups).
+7. **Perplexity-Style Voice Interaction Ducking**:
+   - Resolved the issue where speaker sound feedback or room background noise was repeatedly ducking Tune's voice volume.
+   - Volume now ducks strictly and smoothly ONLY when the user actively interacts/speaks over Tune's voice (sustained voice interaction), exactly like Perplexity and leading voice assistants.
 
 ---
 
