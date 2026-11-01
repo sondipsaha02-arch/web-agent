@@ -138,6 +138,8 @@ export interface UserPreferences {
   screen_share_mode?: "entire" | "tab";
   background_keep_alive?: boolean;
   user_title?: string;
+  card_view?: boolean;
+  card_search?: boolean;
 }
 
 export interface UserHistory {

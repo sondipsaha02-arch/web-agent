@@ -108,6 +108,7 @@ import { FileManagerModal } from "./components/FileManagerModal";
 import { IntelligentPAManager } from "./components/IntelligentPAManager";
 import { InteractiveDraftModal } from "./components/InteractiveDraftModal";
 import { TeacherWhiteboardModal } from "./components/TeacherWhiteboardModal";
+import { YouTubePlayerDock } from "./components/YouTubePlayerDock";
 import { InstallPlatformModal } from "./components/InstallPlatformModal";
 
 // Firebase Persistence Helpers
@@ -1085,16 +1086,14 @@ export default function App() {
 
   const handleMicClick = async () => {
     if (connectionState === "disconnected") {
-      const activeKey = typeof localStorage !== "undefined" ? (localStorage.getItem("custom_gemini_api_key") || "").trim() : "";
-      if (!activeKey) {
-        soundEngine.playAlertBeep();
-        setIsApiKeyModalOpen(true);
-        setRecallMessage("Please connect your free Gemini API Key first");
-        return;
-      }
       setErrorMessage(null);
       setRecallMessage("Awakening Tune Companion");
-      await sessionRef.current?.connect();
+      soundEngine.playWaterDropSound();
+      try {
+        await sessionRef.current?.connect();
+      } catch (err: any) {
+        console.warn("Connection attempt error:", err);
+      }
     } else if (connectionState === "speaking") {
       sessionRef.current?.triggerManualInterrupt();
     }
@@ -2071,6 +2070,9 @@ export default function App() {
         onClose={() => setIsChatDrawerOpen(false)}
         onOpenApiKeySetup={() => setIsApiKeyModalOpen(true)}
       />
+
+      {/* 11.10 IN-APP DIRECT YOUTUBE AUDIO & VIDEO PLAYER DOCK (UNMUTED INSTANT PLAYBACK) */}
+      <YouTubePlayerDock />
 
       {/* NO FOOTER - PURE OBSIDIAN SCREEN */}
     </div>

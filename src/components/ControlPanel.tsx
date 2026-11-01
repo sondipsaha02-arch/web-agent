@@ -1069,6 +1069,86 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                               </button>
                             </div>
 
+                            {/* Toggle 5: Card View (Floating Video & Audio Player) */}
+                            <div className="flex items-center justify-between gap-3 bg-gradient-to-r from-red-950/20 to-zinc-900/40 p-2.5 rounded-xl border border-red-500/20">
+                              <div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-xs font-bold text-white">Card View (ফ্লোটিং কার্ড প্লেয়ার)</span>
+                                  <span className="px-1.5 py-0.2 bg-red-500/20 border border-red-500/30 text-red-300 text-[8px] font-mono rounded font-bold uppercase">
+                                    PERMANENT
+                                  </span>
+                                </div>
+                                <div className="text-[10px] text-white/50 mt-0.5">
+                                  গান বা ভিডিও সরাসরি স্ক্রিনে ড্র্যাগেবল ফ্লোটিং কার্ডে সাউন্ডসহ চালু হবে। শুধুমাত্র স্পেসিফিকভাবে 'ট্যাবে চালাও' বললে ব্রাউজার ট্যাবে খুলবে।
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const currentVal = typeof localStorage !== "undefined" ? localStorage.getItem("tune_card_view") !== "false" : true;
+                                  const newVal = !currentVal;
+                                  if (typeof localStorage !== "undefined") {
+                                    localStorage.setItem("tune_card_view", String(newVal));
+                                  }
+                                  handleUpdatePreferences?.({ card_view: newVal });
+                                  soundEngine.playActionBeep();
+                                }}
+                                className={`w-9 h-5 rounded-full p-0.5 transition-colors cursor-pointer shrink-0 relative ${
+                                  (typeof localStorage !== "undefined" ? localStorage.getItem("tune_card_view") !== "false" : true)
+                                    ? "bg-red-600"
+                                    : "bg-white/10"
+                                }`}
+                              >
+                                <div
+                                  className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                                    (typeof localStorage !== "undefined" ? localStorage.getItem("tune_card_view") !== "false" : true)
+                                      ? "translate-x-4"
+                                      : "translate-x-0"
+                                  }`}
+                                />
+                              </button>
+                            </div>
+
+                            {/* Toggle 6: Card Search (Floating Search Deck) */}
+                            <div className="flex items-center justify-between gap-3 bg-gradient-to-r from-cyan-950/20 to-zinc-900/40 p-2.5 rounded-xl border border-cyan-500/20">
+                              <div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-xs font-bold text-white">Card Search (ফ্লোটিং কার্ড সার্চ)</span>
+                                  <span className="px-1.5 py-0.2 bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-[8px] font-mono rounded font-bold uppercase">
+                                    ACTIVE
+                                  </span>
+                                </div>
+                                <div className="text-[10px] text-white/50 mt-0.5">
+                                  যেকোনো কিছু সার্চ করতে বললে কার্ড আকারে রিয়েল-টাইম তথ্য, সারাংশ ও সোর্স স্ক্রিনের উপর ভেসে উঠবে।
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const currentVal = typeof localStorage !== "undefined" ? localStorage.getItem("tune_card_search") !== "false" : true;
+                                  const newVal = !currentVal;
+                                  if (typeof localStorage !== "undefined") {
+                                    localStorage.setItem("tune_card_search", String(newVal));
+                                  }
+                                  handleUpdatePreferences?.({ card_search: newVal });
+                                  soundEngine.playActionBeep();
+                                }}
+                                className={`w-9 h-5 rounded-full p-0.5 transition-colors cursor-pointer shrink-0 relative ${
+                                  (typeof localStorage !== "undefined" ? localStorage.getItem("tune_card_search") !== "false" : true)
+                                    ? "bg-cyan-500"
+                                    : "bg-white/10"
+                                }`}
+                              >
+                                <div
+                                  className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                                    (typeof localStorage !== "undefined" ? localStorage.getItem("tune_card_search") !== "false" : true)
+                                      ? "translate-x-4"
+                                      : "translate-x-0"
+                                  }`}
+                                />
+                              </button>
+                            </div>
+
                             {/* 4. Character Customization (Zoom In/Out, Drag Position, Save) */}
                             <div className="pt-3 border-t border-white/5 space-y-3">
                               <div className="flex items-center justify-between">

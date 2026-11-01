@@ -119,17 +119,8 @@ export class LiveSession {
       ? (localStorage.getItem("user_gemini_api_key") || localStorage.getItem("custom_gemini_api_key") || "").trim().replace(/^["']|["']$/g, '')
       : "";
 
-    if (!customApiKey) {
-      this.updateState("disconnected");
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent("tune_open_api_key_modal", { detail: { reason: "required" } }));
-      }
-      this.callbacks.onError("Please add your Google AI Studio API Key in Settings to start Live Conversation.");
-      return;
-    }
-
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const queryParam = `?apiKey=${encodeURIComponent(customApiKey)}`;
+    const queryParam = customApiKey ? `?apiKey=${encodeURIComponent(customApiKey)}` : "";
     const wsUrl = `${protocol}//${window.location.host}/ws${queryParam}`;
 
     console.log(`🔌 Connecting to Tune WebSocket proxy at: ${wsUrl}`);
@@ -554,6 +545,13 @@ export class LiveSession {
               console.log("⏰ Clock popup data received via WS:", msg.timeData);
               if (typeof window !== "undefined") {
                 window.dispatchEvent(new CustomEvent("tune_clock_popup", { detail: { timeData: msg.timeData } }));
+              }
+              break;
+
+            case "youtubePlayback":
+              console.log("🎶 YouTube playback data received via WS:", msg.playback);
+              if (msg.playback && typeof window !== "undefined") {
+                window.dispatchEvent(new CustomEvent("tune_youtube_playback", { detail: msg.playback }));
               }
               break;
 

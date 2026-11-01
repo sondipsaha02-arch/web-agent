@@ -1298,13 +1298,42 @@ export class ToolManager {
       console.warn("Client fallback for YouTube resolution:", err);
     }
 
+    let thumbnailUrl = "";
+    let embedUrl = "";
+    if (videoId) {
+      thumbnailUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+      embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=0&controls=0&modestbranding=1&rel=0&iv_load_policy=3&disablekb=1&fs=0&playsinline=1&enablejsapi=1`;
+    }
+
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("tune_youtube_playback", {
-        detail: { query: cleanQuery, title: resolvedTitle, watchUrl: targetUrl, videoId }
+        detail: {
+          query: cleanQuery,
+          title: resolvedTitle,
+          watchUrl: targetUrl,
+          videoId,
+          embedUrl,
+          thumbnailUrl,
+          soundActive: true
+        }
       }));
     }
 
-    return await this.openWebsite(targetUrl);
+    const lowerQ = cleanQuery.toLowerCase();
+    const explicitlyWantsTab = lowerQ.includes("tab") || lowerQ.includes("browser") || lowerQ.includes("ব্রাউজার");
+    if (explicitlyWantsTab) {
+      return await this.openWebsite(targetUrl);
+    }
+
+    return {
+      success: true,
+      action: "in_app_direct_playback",
+      videoId,
+      title: resolvedTitle,
+      watchUrl: targetUrl,
+      soundActive: true,
+      message: `Directly playing "${resolvedTitle}" with sound in Tune!`
+    };
   }
 
   public async playYouTube(query: string, specificSectionOrTimestamp?: string): Promise<any> {

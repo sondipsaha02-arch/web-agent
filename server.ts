@@ -542,6 +542,8 @@ export interface YouTubeVideoResolution {
   watchUrl: string;
   title: string;
   thumbnailUrl: string;
+  durationSec?: number;
+  durationText?: string;
   isDirectPlayback: boolean;
 }
 
@@ -596,11 +598,25 @@ export async function resolveDirectYouTubeVideo(rawQuery: string, specificSectio
         if (titleMatch && titleMatch[1]) {
           title = titleMatch[1].replace(/\\"/g, '"').replace(/\\u0026/g, "&");
         }
+        const lengthMatch = html.match(/"lengthText":\{"accessibility":\{"accessibilityData":\{"label":"[^"]*"\}\},"simpleText":"([^"]+)"\}/);
+        let durationSec = 210;
+        let durationText = "3:30";
+        if (lengthMatch && lengthMatch[1]) {
+          durationText = lengthMatch[1];
+          const parts = durationText.split(":").map(Number);
+          if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+            durationSec = parts[0] * 60 + parts[1];
+          } else if (parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) {
+            durationSec = parts[0] * 3600 + parts[1] * 60 + parts[2];
+          }
+        }
         return {
           videoId,
           watchUrl: `https://www.youtube.com/watch?v=${videoId}&autoplay=1`,
           title,
           thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+          durationSec,
+          durationText,
           isDirectPlayback: true
         };
       }
@@ -619,6 +635,43 @@ export async function resolveDirectYouTubeVideo(rawQuery: string, specificSectio
   };
 }
 
+export async function resolveRelatedYouTubeVideos(rawQuery: string): Promise<Array<{ videoId: string; title: string; watchUrl: string; thumbnailUrl: string }>> {
+  const clean = cleanYouTubeSongQuery(rawQuery);
+  const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(clean + " songs")}`;
+  try {
+    const res = await fetch(searchUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9"
+      },
+      signal: AbortSignal.timeout(3500)
+    });
+    if (res.ok) {
+      const html = await res.text();
+      const regex = /"videoId":"([a-zA-Z0-9_-]{11})","thumbnail":\{"thumbnails":\[\{"url":"([^"]+)".*?"title":\{"runs":\[\{"text":"([^"]+)"/g;
+      const list: Array<{ videoId: string; title: string; watchUrl: string; thumbnailUrl: string }> = [];
+      const seenIds = new Set<string>();
+      let match;
+      while ((match = regex.exec(html)) !== null && list.length < 8) {
+        const vId = match[1];
+        if (!seenIds.has(vId)) {
+          seenIds.add(vId);
+          list.push({
+            videoId: vId,
+            thumbnailUrl: `https://i.ytimg.com/vi/${vId}/hqdefault.jpg`,
+            title: match[3].replace(/\\"/g, '"').replace(/\\u0026/g, "&"),
+            watchUrl: `https://www.youtube.com/watch?v=${vId}&autoplay=1`
+          });
+        }
+      }
+      return list;
+    }
+  } catch (err) {
+    console.warn("Error fetching related YouTube tracks:", err);
+  }
+  return [];
+}
+
 // Route to resolve YouTube song/video to direct playback URL
 app.get("/api/youtube/resolve", async (req, res) => {
   const q = String(req.query.q || req.query.query || "").trim();
@@ -632,6 +685,13 @@ app.post("/api/youtube/resolve", async (req, res) => {
   if (!q) return res.status(400).json({ error: "Query 'q' is required" });
   const result = await resolveDirectYouTubeVideo(q, req.body.specificSectionOrTimestamp);
   res.json({ success: true, ...result });
+});
+
+app.get("/api/youtube/related", async (req, res) => {
+  const q = String(req.query.q || req.query.query || req.query.title || "").trim();
+  if (!q) return res.status(400).json({ error: "Query 'q' is required" });
+  const songs = await resolveRelatedYouTubeVideos(q);
+  res.json({ success: true, songs });
 });
 
 // Route for visual screen & open tab analysis using Gemini 2.5 Flash
@@ -3338,10 +3398,14 @@ Return ONLY valid JSON with keys: "songTitle", "artist", "albumOrMovie", "releas
                           const ytRes = await resolveDirectYouTubeVideo(ytQuery);
                           const ytUrl = ytRes.watchUrl;
 
+                          const embedUrl = ytRes.videoId
+                            ? `https://www.youtube.com/embed/${ytRes.videoId}?autoplay=1&mute=0&controls=0&modestbranding=1&rel=0&iv_load_policy=3&disablekb=1&fs=0&playsinline=1&enablejsapi=1`
+                            : ytRes.watchUrl;
+
                           // Send visual recognition card
                           ws.send(JSON.stringify({
                             type: "transcription",
-                            text: `🎵 [Google Hum to Search - Identified Song]:\n🎶 **${songTitle}**\n🎤 Artist: ${artist}${albumOrMovie ? `\n🎬 Movie/Album: ${albumOrMovie}` : ""}${releaseYear ? ` (${releaseYear})` : ""}\n🔗 Directly playing on YouTube...`,
+                            text: `🎵 [Google Hum to Search - Identified Song]:\n🎶 **${songTitle}**\n🎤 Artist: ${artist}${albumOrMovie ? `\n🎬 Movie/Album: ${albumOrMovie}` : ""}${releaseYear ? ` (${releaseYear})` : ""}\n🔊 গানটি সরাসরি সাউন্ডসহ ব্যাকগ্রাউন্ডে চালু করা হয়েছে!`,
                             isUser: false,
                             isResearch: false,
                             topic: `Song: ${songTitle} - ${artist}`,
@@ -3349,11 +3413,17 @@ Return ONLY valid JSON with keys: "songTitle", "artist", "albumOrMovie", "releas
                             sources: [{ title: `Play "${songTitle}" on YouTube`, url: ytUrl, domain: "youtube.com", imageUrl: ytRes.thumbnailUrl, verified: true }]
                           }));
 
-                          // Launch YouTube direct playback on client
+                          // Launch in-app unmuted playback
                           ws.send(JSON.stringify({
-                            type: "toolAction",
-                            tool: "openWebsite",
-                            args: { url: ytUrl }
+                            type: "youtubePlayback",
+                            playback: {
+                              videoId: ytRes.videoId,
+                              title: `${songTitle} - ${artist}`,
+                              watchUrl: ytUrl,
+                              embedUrl,
+                              thumbnailUrl: ytRes.thumbnailUrl,
+                              isPlaying: true
+                            }
                           }));
 
                           interceptedOutput = {
@@ -3363,7 +3433,7 @@ Return ONLY valid JSON with keys: "songTitle", "artist", "albumOrMovie", "releas
                             albumOrMovie,
                             releaseYear,
                             youtubeUrl: ytUrl,
-                            message: `Identified hummed song: '${songTitle}' by '${artist}'. YouTube direct playback has been launched with autoplay for Boss.`
+                            message: `Identified hummed song: '${songTitle}' by '${artist}'. Direct YouTube playback with sound has been started for Boss inside Tune.`
                           };
 
                         } else if (call.name === "searchYouTube" || call.name === "playYouTubeVideo") {
@@ -3374,17 +3444,37 @@ Return ONLY valid JSON with keys: "songTitle", "artist", "albumOrMovie", "releas
 
                           const ytRes = await resolveDirectYouTubeVideo(query, specificSectionOrTimestamp);
 
-                          // Send toolAction to client to immediately open the direct watch URL on Chrome with autoplay
+                          const embedUrl = ytRes.videoId
+                            ? `https://www.youtube.com/embed/${ytRes.videoId}?autoplay=1&mute=0&controls=0&modestbranding=1&rel=0&iv_load_policy=3&disablekb=1&fs=0&playsinline=1&enablejsapi=1`
+                            : ytRes.watchUrl;
+
+                          // Send in-app direct playback payload (starts playing audio instantly with sound, 0 taps needed!)
                           ws.send(JSON.stringify({
-                            type: "toolAction",
-                            tool: "openWebsite",
-                            args: { url: ytRes.watchUrl }
+                            type: "youtubePlayback",
+                            playback: {
+                              videoId: ytRes.videoId,
+                              title: ytRes.title,
+                              watchUrl: ytRes.watchUrl,
+                              embedUrl,
+                              thumbnailUrl: ytRes.thumbnailUrl,
+                              isPlaying: true
+                            }
                           }));
+
+                          // If user specifically asked for tab or browser, open tab as well
+                          const lowerQ = String(query).toLowerCase();
+                          if (lowerQ.includes("tab") || lowerQ.includes("browser") || lowerQ.includes("ব্রাউজার")) {
+                            ws.send(JSON.stringify({
+                              type: "toolAction",
+                              tool: "openWebsite",
+                              args: { url: ytRes.watchUrl }
+                            }));
+                          }
 
                           // Push direct playback notification to client UI
                           ws.send(JSON.stringify({
                             type: "transcription",
-                            text: `🎶 [YouTube Direct Playback]:\n▶️ **${ytRes.title}**\n🔗 ${ytRes.watchUrl}\n(বস্, গানটি সরাসরি চালু করে দেওয়া হয়েছে!)`,
+                            text: `🎶 [YouTube Direct Playback]:\n▶️ **${ytRes.title}**\n🔊 গানটি সরাসরি সাউন্ডসহ ব্যাকগ্রাউন্ডে চালু করা হয়েছে! (কোনো ট্যাপ করার প্রয়োজন নেই)`,
                             isUser: false,
                             topic: `YouTube: ${ytRes.title}`,
                             imageUrl: ytRes.thumbnailUrl,
@@ -3405,7 +3495,7 @@ Return ONLY valid JSON with keys: "songTitle", "artist", "albumOrMovie", "releas
                             watchUrl: ytRes.watchUrl,
                             title: ytRes.title,
                             isDirectPlayback: ytRes.isDirectPlayback,
-                            CRITICAL_SPOKEN_DIRECTIVE: `You MUST now warmly speak out to Boss in natural Bengali/Banglish that you have directly started playing '${ytRes.title}' on YouTube without making them search! (e.g. 'বস্, ইউটিউবে ${ytRes.title} গানটি সরাসরি প্লে করে দিয়েছি!')`
+                            CRITICAL_SPOKEN_DIRECTIVE: `You MUST now warmly speak out to Boss in natural Bengali/Banglish that you have directly started playing '${ytRes.title}' on YouTube with sound enabled! (e.g. 'বস্, ইউটিউবে ${ytRes.title} গানটি সরাসরি সাউন্ডসহ প্লে করে দিয়েছি!')`
                           };
 
                         } else if (call.name === "provideDecisionOptions") {
