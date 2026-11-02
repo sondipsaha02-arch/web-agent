@@ -4150,13 +4150,27 @@ FORMAT THE REPORT CLEARLY IN BANGLISH / BENGALI AS:
                               CRITICAL_SPOKEN_DIRECTIVE: `You MUST now verbally explain and analyze these Google search results out loud to Boss in natural, friendly Banglish/Bengali! State the direct conclusion/verdict, key findings & public reviews, and your bottom line recommendation. Here is the verified analysis to explain:\n\n${answer}`
                             };
 
-                            // Open Google Search in browser for Boss: "kono kisu search korte bolle jeno seta browsers e search kore"
-                            const activeSearchUrl = `https://www.google.com/search?q=${encodeURIComponent(String(topic || "Search"))}`;
+                            // Push to Floating Card Search Dock
                             ws.send(JSON.stringify({
-                              type: "toolAction",
-                              tool: "openWebsite",
-                              args: { url: activeSearchUrl }
+                              type: "cardSearchPayload",
+                              searchData: {
+                                query: topic || "Search",
+                                title: topic || "Google Search Result",
+                                summary: answer,
+                                sources: finalSources
+                              }
                             }));
+
+                            // Only open in browser if user specifically asked for tab/browser
+                            const lowerTopic = String(topic || "").toLowerCase();
+                            if (lowerTopic.includes("tab") || lowerTopic.includes("browser") || lowerTopic.includes("ট্যাব") || lowerTopic.includes("ব্রাউজার")) {
+                              const activeSearchUrl = `https://www.google.com/search?q=${encodeURIComponent(String(topic || "Search"))}`;
+                              ws.send(JSON.stringify({
+                                type: "toolAction",
+                                tool: "openWebsite",
+                                args: { url: activeSearchUrl }
+                              }));
+                            }
 
                             // Push enriched comparative research transcription directly to client UI
                             ws.send(JSON.stringify({

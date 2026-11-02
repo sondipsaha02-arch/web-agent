@@ -555,6 +555,13 @@ export class LiveSession {
               }
               break;
 
+            case "cardSearchPayload":
+              console.log("🔍 Card search data received via WS:", msg.searchData);
+              if (msg.searchData && typeof window !== "undefined") {
+                window.dispatchEvent(new CustomEvent("tune_card_search", { detail: msg.searchData }));
+              }
+              break;
+
             case "modeSwitched":
               console.log("⚡ Mode switched via tool command to:", msg.mode);
               const incomingMode = msg.mode || "manual";

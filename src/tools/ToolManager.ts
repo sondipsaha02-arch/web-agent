@@ -329,6 +329,25 @@ export class ToolManager {
    */
   private async performGoogleResearch(topic: string): Promise<any> {
     console.log(`🔎 Performing client-fallback Google Research for topic: "${topic}"`);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("tune_card_search", {
+          detail: {
+            query: topic,
+            title: topic,
+            summary: `গুগলে "${topic}" অনুসন্ধান করা হয়েছে। বিস্তারিত তথ্য লোড হচ্ছে...`,
+            sources: [
+              {
+                title: `Google Search for "${topic}"`,
+                url: `https://www.google.com/search?q=${encodeURIComponent(topic)}`,
+                domain: "google.com",
+                verified: true
+              }
+            ]
+          }
+        })
+      );
+    }
     try {
       const response = await fetch("/api/browser/control", {
         method: "POST",

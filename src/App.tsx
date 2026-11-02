@@ -109,6 +109,7 @@ import { IntelligentPAManager } from "./components/IntelligentPAManager";
 import { InteractiveDraftModal } from "./components/InteractiveDraftModal";
 import { TeacherWhiteboardModal } from "./components/TeacherWhiteboardModal";
 import { YouTubePlayerDock } from "./components/YouTubePlayerDock";
+import { SearchCardDock } from "./components/SearchCardDock";
 import { InstallPlatformModal } from "./components/InstallPlatformModal";
 
 // Firebase Persistence Helpers
@@ -2073,6 +2074,9 @@ export default function App() {
 
       {/* 11.10 IN-APP DIRECT YOUTUBE AUDIO & VIDEO PLAYER DOCK (UNMUTED INSTANT PLAYBACK) */}
       <YouTubePlayerDock />
+
+      {/* 11.11 IN-APP DIRECT FLOATING CARD SEARCH DOCK */}
+      <SearchCardDock />
 
       {/* NO FOOTER - PURE OBSIDIAN SCREEN */}
     </div>

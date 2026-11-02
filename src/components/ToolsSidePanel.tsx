@@ -251,6 +251,26 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
       );
     }
   };
+  const [isCardModeActive, setIsCardModeActive] = useState<boolean>(() => {
+    if (typeof localStorage !== "undefined") {
+      return localStorage.getItem("tune_card_mode") !== "false";
+    }
+    return true;
+  });
+
+  const handleToggleCardMode = () => {
+    soundEngine.playActionBeep();
+    const next = !isCardModeActive;
+    setIsCardModeActive(next);
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem("tune_card_mode", String(next));
+      localStorage.setItem("tune_card_view", String(next));
+      localStorage.setItem("tune_card_search", String(next));
+    }
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("tune_card_mode_changed", { detail: { cardMode: next } }));
+    }
+  };
 
   const handleAction = (cb?: () => void) => {
     if (cb) {
@@ -900,6 +920,62 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
                     </div>
                   </div>
                   <ChevronRight className="w-4 h-4 text-cyan-400/70 group-hover:translate-x-0.5 group-hover:text-cyan-300 transition-all" />
+                </div>
+
+                {/* DEDICATED CARD MODE TILE (USER REQUIREMENT: DIRECT DEDICATED BUTTON IN SIDE PANEL) */}
+                <div
+                  onClick={handleToggleCardMode}
+                  className={`mb-2.5 p-3 rounded-[20px] border transition-all cursor-pointer flex items-center justify-between shadow-lg active:scale-[0.98] ${
+                    isCardModeActive
+                      ? "border-red-500/40 bg-gradient-to-r from-red-950/40 via-rose-950/30 to-zinc-900/60 shadow-[0_4px_20px_rgba(239,68,68,0.18)]"
+                      : "border-white/10 bg-white/[0.04] hover:bg-white/[0.07]"
+                  }`}
+                  title="Toggle Card Mode: গান ও সার্চ সরাসরি ফ্লোটিং কার্ডে দেখাবে"
+                >
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={`w-9 h-9 rounded-[12px] flex items-center justify-center shadow-md transition-transform ${
+                        isCardModeActive
+                          ? "bg-gradient-to-tr from-red-600 via-rose-500 to-amber-500 text-white"
+                          : "bg-white/10 text-white/40"
+                      }`}
+                    >
+                      <Layers className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-[12px] font-bold text-white tracking-tight flex items-center gap-1.5">
+                        <span>Card Mode</span>
+                        <span className="text-[10px] text-red-300 font-normal">কার্ড ভিউ ও সার্চ</span>
+                        <span
+                          className={`px-1.5 py-0.2 rounded-full text-[8px] font-semibold ${
+                            isCardModeActive
+                              ? "bg-red-500/20 text-red-300 border border-red-500/30"
+                              : "bg-white/10 text-white/40"
+                          }`}
+                        >
+                          {isCardModeActive ? "ACTIVE" : "OFF"}
+                        </span>
+                      </div>
+                      <div className="text-[9px] text-white/50">
+                        {isCardModeActive
+                          ? "অন: গান ও সার্চ সরাসরি প্ল্যাটফর্মের ভেতরে কার্ডে খুলবে"
+                          : "অফ: সাধারণ স্বাভাবিক নিয়মে চলবে"}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Toggle Switch */}
+                  <div
+                    className={`w-9 h-5 rounded-full p-0.5 transition-colors shrink-0 relative ${
+                      isCardModeActive ? "bg-red-600" : "bg-white/15"
+                    }`}
+                  >
+                    <div
+                      className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                        isCardModeActive ? "translate-x-4" : "translate-x-0"
+                      }`}
+                    />
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2.5">
