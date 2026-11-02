@@ -130,11 +130,16 @@ app.post("/api/validate-key", async (req, res) => {
         try {
           const testAi = new GoogleGenAI({ apiKey: keyToTest });
           const response = await testAi.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: "Hello",
+            model: "gemini-3.8-flash",
+            contents: "Confirm API key status in 5 words: 'API Key active and live.'",
           });
           if (response) {
-            return res.json({ valid: true, provider: "gemini", message: "Google Gemini API key verified successfully!" });
+            return res.json({
+              valid: true,
+              provider: "gemini",
+              message: "Google Gemini API key verified successfully!",
+              liveTestResponse: response.text?.trim() || "API Key active and live."
+            });
           }
         } catch {}
       }
@@ -223,11 +228,16 @@ app.post("/api/validate-key", async (req, res) => {
     try {
       const testAi = new GoogleGenAI({ apiKey: keyToTest });
       const response = await testAi.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: "Hello",
+        model: "gemini-3.8-flash",
+        contents: "Respond in 5 words confirming connection: 'API Key active and live.'",
       });
       if (response) {
-        return res.json({ valid: true, provider: "gemini", message: "Google Gemini API key verified successfully!" });
+        return res.json({
+          valid: true,
+          provider: "gemini",
+          message: "Google Gemini API key verified & active!",
+          liveTestResponse: response.text?.trim() || "API Key active and live."
+        });
       }
     } catch (err: any) {
       let friendlyMessage = "Gemini API key not valid. Please check your key from Google AI Studio.";
@@ -363,7 +373,7 @@ CRITICAL MANDATE - ZERO ECHO RULE:
           if (fallbackKey) {
             const geminiClient = new GoogleGenAI({ apiKey: fallbackKey });
             const response = await geminiClient.models.generateContent({
-              model: "gemini-2.5-flash",
+              model: "gemini-3.8-flash",
               contents: messages.map((m: any) => ({
                 role: m.role === "assistant" ? "model" : "user",
                 parts: [{ text: m.content }]
@@ -372,7 +382,7 @@ CRITICAL MANDATE - ZERO ECHO RULE:
             });
             const reply = response.text || "";
             if (reply) {
-              return res.json({ text: reply, provider: "gemini", model: "gemini-2.5-flash" });
+              return res.json({ text: reply, provider: "gemini", model: "gemini-3.8-flash" });
             }
           }
         } catch (geminiErr: any) {}
@@ -492,7 +502,7 @@ CRITICAL MANDATE - ZERO ECHO RULE:
         }));
 
         const response = await geminiClient.models.generateContent({
-          model: model || "gemini-2.5-flash",
+          model: model || "gemini-3.8-flash",
           contents: formattedContents,
           config: {
             systemInstruction: systemPrompt,
@@ -505,7 +515,7 @@ CRITICAL MANDATE - ZERO ECHO RULE:
           try {
             const fbClient = new GoogleGenAI({ apiKey: geminiApiKey });
             const fbRes = await fbClient.models.generateContent({
-              model: "gemini-2.5-flash",
+              model: "gemini-3.8-flash",
               contents: messages.map((m: any) => ({
                 role: m.role === "assistant" ? "model" : "user",
                 parts: [{ text: m.content }]
@@ -519,7 +529,7 @@ CRITICAL MANDATE - ZERO ECHO RULE:
     }
 
     if (reply) {
-      return res.json({ text: reply, provider: "gemini", model: model || "gemini-2.5-flash" });
+      return res.json({ text: reply, provider: "gemini", model: model || "gemini-3.8-flash" });
     }
 
     return res.json({

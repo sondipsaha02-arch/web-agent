@@ -181,6 +181,10 @@ export default function App() {
   const [isSpeakerMuted, setIsSpeakerMuted] = useState<boolean>(() => {
     return typeof localStorage !== "undefined" ? localStorage.getItem("tune_speaker_muted") === "true" : false;
   });
+  const [hasActiveInjectedKey, setHasActiveInjectedKey] = useState<boolean>(() => {
+    if (typeof localStorage === "undefined") return false;
+    return Boolean(localStorage.getItem("user_gemini_api_key") || localStorage.getItem("custom_gemini_api_key"));
+  });
 
   // Sync asking mode, operation mode, speaker mute, interactive drafts, whiteboard, calculator, clock, and live real-time process state
   useEffect(() => {
@@ -242,11 +246,16 @@ export default function App() {
       setIsApiKeyModalOpen(true);
       soundEngine.playAlertBeep();
     };
+    const handleKeyUpdated = () => {
+      setHasActiveInjectedKey(Boolean(typeof localStorage !== "undefined" && (localStorage.getItem("user_gemini_api_key") || localStorage.getItem("custom_gemini_api_key"))));
+    };
     window.addEventListener("tune_whiteboard_updated", handleWhiteboardUpdated);
     window.addEventListener("tune_calculator_updated", handleCalculatorUpdated);
     window.addEventListener("tune_clock_popup", handleClockPopup);
     window.addEventListener("tune_live_process_updated", handleLiveProcessUpdated);
     window.addEventListener("tune_open_api_key_modal", handleOpenApiKeyModal);
+    window.addEventListener("tune-api-key-updated", handleKeyUpdated);
+    window.addEventListener("tune-profile-changed", handleKeyUpdated);
     return () => {
       window.removeEventListener("tune_operation_mode_changed", handleOperationModeChange);
       window.removeEventListener("pa_asking_mode_changed", handleAskingModeChange);
@@ -257,6 +266,8 @@ export default function App() {
       window.removeEventListener("tune_clock_popup", handleClockPopup);
       window.removeEventListener("tune_live_process_updated", handleLiveProcessUpdated);
       window.removeEventListener("tune_open_api_key_modal", handleOpenApiKeyModal);
+      window.removeEventListener("tune-api-key-updated", handleKeyUpdated);
+      window.removeEventListener("tune-profile-changed", handleKeyUpdated);
     };
   }, []);
 
@@ -1660,7 +1671,7 @@ export default function App() {
       </AnimatePresence>
 
       {/* 6.9 TOP-LEFT 3-LINE (HAMBURGER) MENU TRIGGER */}
-      <div className="absolute top-4 left-4 z-40">
+      <div className="absolute top-4 left-4 z-40 flex items-center gap-2">
         <button
           onClick={() => {
             soundEngine.playActionBeep();

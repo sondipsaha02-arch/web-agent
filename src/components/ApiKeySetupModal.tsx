@@ -10,7 +10,9 @@ import {
   EyeOff,
   ArrowRight,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Trash2,
+  Zap
 } from "lucide-react";
 import { soundEngine } from "../utils/soundEngine";
 import {
@@ -20,6 +22,7 @@ import {
   PROVIDERS,
   AiProvider
 } from "../utils/userProfiles";
+import { validateAndTestKeyLive } from "../utils/apiKeyManager";
 
 interface ApiKeySetupModalProps {
   isOpen: boolean;
@@ -87,29 +90,13 @@ export const ApiKeySetupModal: React.FC<ApiKeySetupModalProps> = ({
 
     setIsVerifying(true);
     setIsError(false);
-    setStatusMessage(`API Key যাচাই করা হচ্ছে (${PROVIDERS[targetProvider]?.name || targetProvider})...`);
+    setStatusMessage(`API Key যাচাই ও লাইভ টেস্ট করা হচ্ছে (${PROVIDERS[targetProvider]?.name || targetProvider})...`);
     soundEngine.playActionBeep();
 
     try {
-      const response = await fetch("/api/validate-key", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: cleanKey, provider: targetProvider }),
-      });
+      const res = await validateAndTestKeyLive(cleanKey, targetProvider);
 
-      const data = await response.json();
-
-      if (response.ok && data.valid) {
-        const confirmedProvider = (data.provider as AiProvider) || targetProvider;
-        // Save key to active user profile and mark as configured
-        updateActiveProfileApiKey(cleanKey, confirmedProvider);
-        if (typeof localStorage !== "undefined") {
-          localStorage.setItem("user_gemini_api_key", cleanKey);
-          localStorage.setItem("custom_gemini_api_key", cleanKey);
-          localStorage.setItem("tune_api_provider", confirmedProvider);
-          localStorage.setItem(STORAGE_API_KEY_CONFIGURED, "true");
-        }
-
+      if (res.valid) {
         // Trigger Apple iPhone "hello" welcome animation
         soundEngine.playWarpEmergeSound();
         setShowHelloAnimation(true);
@@ -122,35 +109,14 @@ export const ApiKeySetupModal: React.FC<ApiKeySetupModalProps> = ({
       } else {
         setIsVerifying(false);
         setIsError(true);
-        let errorMsg = data.error || "ভুল API Key! দয়া করে সঠিক কী প্রদান করুন।";
-        try {
-          const parsed = typeof errorMsg === "string" ? JSON.parse(errorMsg) : errorMsg;
-          if (parsed?.error?.message) errorMsg = parsed.error.message;
-        } catch {}
-        setStatusMessage(errorMsg);
+        setStatusMessage(res.error || "ভুল API Key! দয়া করে সঠিক কী প্রদান করুন।");
         soundEngine.playAlertBeep();
       }
     } catch (err: any) {
-      // Fallback save if network glitch but key is standard format
-      if (cleanKey.length >= 20) {
-        updateActiveProfileApiKey(cleanKey, targetProvider);
-        if (typeof localStorage !== "undefined") {
-          localStorage.setItem("user_gemini_api_key", cleanKey);
-          localStorage.setItem("custom_gemini_api_key", cleanKey);
-          localStorage.setItem("tune_api_provider", targetProvider);
-          localStorage.setItem(STORAGE_API_KEY_CONFIGURED, "true");
-        }
-        setShowHelloAnimation(true);
-        setTimeout(() => {
-          setIsVerifying(false);
-          setShowHelloAnimation(false);
-          onSuccess(cleanKey);
-        }, 3000);
-      } else {
-        setIsVerifying(false);
-        setIsError(true);
-        setStatusMessage("API Key যাচাই করা যায়নি। কী-টি সম্পূর্ণ কিনা পুনরায় চেক করুন।");
-      }
+      setIsVerifying(false);
+      setIsError(true);
+      setStatusMessage(err?.message || "API Key যাচাই করা যায়নি। ইন্টারনেট সংযোগ বা কী-টি চেক করুন।");
+      soundEngine.playAlertBeep();
     }
   };
 
@@ -358,26 +324,49 @@ export const ApiKeySetupModal: React.FC<ApiKeySetupModalProps> = ({
               )}
             </div>
 
-            {/* Run Button */}
-            <button
-              type="button"
-              onClick={handleValidateAndRun}
-              disabled={isVerifying}
-              className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 hover:from-cyan-400 to-blue-600 hover:to-blue-500 disabled:opacity-50 text-zinc-950 font-bold text-xs uppercase tracking-wider font-mono flex items-center justify-center gap-2 shadow-[0_4px_25px_rgba(6,182,212,0.35)] transition cursor-pointer active:scale-[0.98]"
-            >
-              {isVerifying ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Verifying API Key...</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4 fill-zinc-950" />
-                  <span>Save & Run Tune Companion</span>
-                  <ArrowRight className="w-4 h-4" />
-                </>
+            {/* Inject & Run Buttons */}
+            <div className="flex items-center gap-2">
+              {Boolean(typeof localStorage !== "undefined" && (localStorage.getItem("user_gemini_api_key") || localStorage.getItem("custom_gemini_api_key"))) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playAlertBeep();
+                    setApiKeyInput("");
+                    updateActiveProfileApiKey("");
+                    if (typeof localStorage !== "undefined") {
+                      localStorage.removeItem("user_gemini_api_key");
+                      localStorage.removeItem("custom_gemini_api_key");
+                      localStorage.removeItem("tune_api_provider");
+                    }
+                    setStatusMessage("API Key মুছে ফেলা হয়েছে (LocalStorage cleared)");
+                    setTimeout(() => setStatusMessage(null), 3000);
+                  }}
+                  className="py-3.5 px-3.5 rounded-2xl bg-white/5 hover:bg-red-500/15 border border-white/10 hover:border-red-500/30 text-white/60 hover:text-red-300 font-bold text-xs uppercase tracking-wider font-mono flex items-center justify-center transition cursor-pointer"
+                  title="Clear Key from Browser Local Storage"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
               )}
-            </button>
+              <button
+                type="button"
+                onClick={handleValidateAndRun}
+                disabled={isVerifying}
+                className="flex-1 py-3.5 px-4 rounded-2xl bg-gradient-to-r from-cyan-500 hover:from-cyan-400 to-blue-600 hover:to-blue-500 disabled:opacity-50 text-zinc-950 font-bold text-xs uppercase tracking-wider font-mono flex items-center justify-center gap-2 shadow-[0_4px_25px_rgba(6,182,212,0.35)] transition cursor-pointer active:scale-[0.98]"
+              >
+                {isVerifying ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Verifying & Testing Live...</span>
+                  </>
+                ) : (
+                  <>
+                    <Zap className="w-4 h-4 fill-zinc-950" />
+                    <span>Inject & Test Live</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+            </div>
 
             {/* Get Free API Key Link */}
             <div className="mt-4 pt-3 border-t border-white/5 flex items-center justify-between text-[11px]">

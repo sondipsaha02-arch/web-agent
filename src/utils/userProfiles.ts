@@ -16,7 +16,7 @@ export const PROVIDERS: Record<AiProvider, ProviderMeta> = {
     badge: "Gemini",
     placeholder: "Paste Gemini API Key (AIzaSy...)",
     docUrl: "https://aistudio.google.com/app/apikey",
-    defaultModel: "gemini-2.5-flash",
+    defaultModel: "gemini-3.8-flash",
   },
   openrouter: {
     id: "openrouter",

@@ -40,7 +40,9 @@ import {
   Loader2,
   Calculator,
   Clock,
-  Download
+  Download,
+  Zap,
+  Play
 } from "lucide-react";
 import { soundEngine } from "../utils/soundEngine";
 import { ConnectionState } from "../types";
@@ -57,6 +59,12 @@ import {
   PROVIDERS,
   detectAiProvider
 } from "../utils/userProfiles";
+import {
+  validateAndTestKeyLive,
+  clearInjectedApiKey,
+  getInjectedApiKey,
+  hasInjectedApiKey
+} from "../utils/apiKeyManager";
 
 interface ToolsSidePanelProps {
   isOpen: boolean;
@@ -179,6 +187,8 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
   const [selectedProvider, setSelectedProvider] = useState<AiProvider | "auto">("auto");
   const [showApiKeyText, setShowApiKeyText] = useState(false);
   const [isVerifyingApiKey, setIsVerifyingApiKey] = useState(false);
+  const [isTestingLiveKey, setIsTestingLiveKey] = useState(false);
+  const [liveTestResult, setLiveTestResult] = useState<{ message: string; liveText?: string; isError?: boolean } | null>(null);
   const [apiKeyFeedback, setApiKeyFeedback] = useState<{ message: string; isError?: boolean } | null>(null);
 
   useEffect(() => {
@@ -323,6 +333,52 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
     setActiveProfile(getActiveProfile());
   };
 
+  const handleTestActiveKeyLive = async () => {
+    const activeKey =
+      activeProfile.apiKey ||
+      getInjectedApiKey();
+
+    if (!activeKey) {
+      setApiKeyFeedback({
+        message: "কোনো API Key ইনজেক্ট করা নেই। দয়া করে আগে কী ইনজেক্ট করুন।",
+        isError: true,
+      });
+      return;
+    }
+
+    setIsTestingLiveKey(true);
+    setLiveTestResult(null);
+    soundEngine.playActionBeep();
+
+    try {
+      const targetProvider = activeProfile.provider || detectAiProvider(activeKey);
+      const res = await validateAndTestKeyLive(activeKey, targetProvider);
+      setIsTestingLiveKey(false);
+
+      if (res.valid) {
+        soundEngine.playNotificationChime();
+        setLiveTestResult({
+          message: "API Key ভেরিফাইড এবং লাইভ রেসপন্স সফল!",
+          liveText: res.liveTestResponse || "AI Engine is live and responding.",
+          isError: false,
+        });
+        setActiveProfile(getActiveProfile());
+      } else {
+        soundEngine.playAlertBeep();
+        setLiveTestResult({
+          message: res.error || "লাইভ টেস্ট ব্যর্থ হয়েছে। কী-টি সঠিক কিনা চেক করুন।",
+          isError: true,
+        });
+      }
+    } catch (err: any) {
+      setIsTestingLiveKey(false);
+      setLiveTestResult({
+        message: err?.message || "নেটওয়ার্ক সমস্যা। আবার চেষ্টা করুন।",
+        isError: true,
+      });
+    }
+  };
+
   const handleSaveInlineApiKey = async () => {
     const cleanKey = apiKeyInput
       .trim()
@@ -332,12 +388,13 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
       .trim();
 
     if (!cleanKey) {
-      updateActiveProfileApiKey("");
+      clearInjectedApiKey();
       setActiveProfile(getActiveProfile());
       setProfiles(getStoredProfiles());
       setIsEditingApiKey(false);
+      setLiveTestResult(null);
       setApiKeyFeedback({
-        message: "API Key cleared. Using free default.",
+        message: "API Key মুছে ফেলা হয়েছে (LocalStorage cleared)।",
         isError: false,
       });
       setTimeout(() => setApiKeyFeedback(null), 4000);
@@ -346,74 +403,55 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
 
     if (cleanKey.length < 10) {
       setApiKeyFeedback({
-        message: "API Key is too short. Please paste a complete key.",
+        message: "API Key খুব ছোট। দয়া করে সম্পূর্ণ কী পেস্ট করুন।",
         isError: true,
       });
       soundEngine.playAlertBeep();
       return;
     }
 
-    // Determine target provider
     const targetProvider = selectedProvider === "auto" ? detectAiProvider(cleanKey) : selectedProvider;
 
     setIsVerifyingApiKey(true);
-    setApiKeyFeedback({ message: `Verifying API Key with ${PROVIDERS[targetProvider]?.name || targetProvider}...`, isError: false });
+    setApiKeyFeedback({
+      message: `API Key যাচাই ও লাইভ টেস্ট করা হচ্ছে (${PROVIDERS[targetProvider]?.name || targetProvider})...`,
+      isError: false,
+    });
     soundEngine.playActionBeep();
 
     try {
-      const res = await fetch("/api/validate-key", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: cleanKey, provider: targetProvider }),
-      });
-      const data = await res.json();
+      const res = await validateAndTestKeyLive(cleanKey, targetProvider);
       setIsVerifyingApiKey(false);
 
-      if (res.ok && data.valid) {
-        const verifiedProvider = (data.provider as AiProvider) || targetProvider;
-        updateActiveProfileApiKey(cleanKey, verifiedProvider);
+      if (res.valid) {
         setActiveProfile(getActiveProfile());
         setProfiles(getStoredProfiles());
         setIsEditingApiKey(false);
         soundEngine.playNotificationChime();
-        setApiKeyFeedback({
-          message: `${PROVIDERS[verifiedProvider]?.badge || "AI"} Key saved! Tune will never prompt again.`,
+        setLiveTestResult({
+          message: "API Key ইনজেক্ট ও LocalStorage-এ স্থায়ীভাবে সংরক্ষিত হয়েছে!",
+          liveText: res.liveTestResponse || "API Key active and live.",
           isError: false,
         });
-        setTimeout(() => setApiKeyFeedback(null), 5000);
-      } else {
-        let errorMsg = data.error || "ভুল API Key! দয়া করে সঠিক কী দিন।";
-        try {
-          const parsed = typeof errorMsg === "string" ? JSON.parse(errorMsg) : errorMsg;
-          if (parsed?.error?.message) errorMsg = parsed.error.message;
-        } catch {}
         setApiKeyFeedback({
-          message: errorMsg,
+          message: `${PROVIDERS[res.provider]?.badge || "AI"} Key ইনজেক্ট ও LocalStorage-এ সংরক্ষিত! Vercel বা লাইভ অ্যাপে পরবর্তীতে এই কী দিয়েই সমস্ত লাইভ রেসপন্স তৈরি হবে।`,
+          isError: false,
+        });
+        setTimeout(() => setApiKeyFeedback(null), 6000);
+      } else {
+        soundEngine.playAlertBeep();
+        setApiKeyFeedback({
+          message: res.error || "ভুল API Key! দয়া করে সঠিক কী দিন।",
           isError: true,
         });
-        soundEngine.playAlertBeep();
       }
     } catch (err: any) {
       setIsVerifyingApiKey(false);
-      // Fallback save if network issue
-      if (cleanKey.length >= 20) {
-        updateActiveProfileApiKey(cleanKey, targetProvider);
-        setActiveProfile(getActiveProfile());
-        setProfiles(getStoredProfiles());
-        setIsEditingApiKey(false);
-        soundEngine.playNotificationChime();
-        setApiKeyFeedback({
-          message: `${PROVIDERS[targetProvider]?.badge || "AI"} Key saved locally for this profile! Won't ask again.`,
-          isError: false,
-        });
-        setTimeout(() => setApiKeyFeedback(null), 5000);
-      } else {
-        setApiKeyFeedback({
-          message: "Key verification failed. Check internet connection.",
-          isError: true,
-        });
-        soundEngine.playAlertBeep();
-      }
+      soundEngine.playAlertBeep();
+      setApiKeyFeedback({
+        message: err?.message || "Key যাচাই ব্যর্থ হয়েছে। দয়া করে ইন্টারনেট সংযোগ চেক করুন।",
+        isError: true,
+      });
     }
   };
 
@@ -691,43 +729,76 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
                   )}
                 </AnimatePresence>
 
-                {/* 0.2 GEMINI API KEY DEDICATED SLOT (Restored to exact clean look) */}
+                {/* 0.2 USER API KEY INJECTOR & LOCAL STORAGE ENGINE */}
                 <div className="pt-2.5 border-t border-white/[0.08] space-y-2">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
-                      <Key className="w-3.5 h-3.5 text-emerald-400" />
-                      <span className="text-[11px] font-bold tracking-tight text-white">
-                        Gemini API Key
-                      </span>
+                      <div className="w-5 h-5 rounded-md bg-emerald-500/20 border border-emerald-500/35 flex items-center justify-center text-emerald-400 shrink-0">
+                        <Key className="w-3 h-3" />
+                      </div>
+                      <div>
+                        <span className="text-[11px] font-bold tracking-tight text-white block">
+                          API Key Injector
+                        </span>
+                        <span className="text-[8.5px] text-white/45">Browser LocalStorage</span>
+                      </div>
                     </div>
 
                     {activeProfile.apiKey ? (
-                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[9px] font-mono font-medium flex items-center gap-1">
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[9px] font-mono font-medium flex items-center gap-1">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                        Configured
+                        Live Active
                       </span>
                     ) : (
-                      <span className="px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[9px] font-mono font-medium">
-                        Not Configured
+                      <span className="px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[9px] font-mono font-medium">
+                        Default Key
                       </span>
                     )}
                   </div>
 
                   {/* Masked Key Display or Edit Slot */}
                   {!isEditingApiKey ? (
-                    <div className="bg-black/40 border border-white/5 rounded-xl p-2.5 flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="text-[11px] font-mono text-white/90 truncate">
-                          {activeProfile.apiKey
-                            ? `${activeProfile.apiKey.slice(0, 8)}••••••••${activeProfile.apiKey.slice(-4)}`
-                            : "No personal API key configured"}
-                        </div>
-                        <div className="text-[9px] text-white/40 mt-0.5">
-                          Save permanent: Tune will never prompt again.
+                    <div className="bg-black/40 border border-white/10 rounded-xl p-2.5 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="text-[11px] font-mono text-emerald-300 font-semibold truncate flex items-center gap-1.5">
+                            <span>
+                              {activeProfile.apiKey
+                                ? `${activeProfile.apiKey.slice(0, 8)}••••••••${activeProfile.apiKey.slice(-4)}`
+                                : "No personal API key injected"}
+                            </span>
+                            {activeProfile.apiKey && (
+                              <span className="px-1.5 py-0.2 rounded bg-white/10 text-[8px] font-mono text-white/70">
+                                {PROVIDERS[activeProfile.provider || "gemini"]?.badge || "AI"}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[9px] text-white/40 mt-0.5">
+                            {activeProfile.apiKey
+                              ? "LocalStorage-এ সংরক্ষিত। পরবর্তীতে অ্যাপ এই কী দিয়ে লাইভ রেসপন্স জেনারেট করবে।"
+                              : "নিজের Gemini বা AI API key ইনজেক্ট করতে নিচের বাটনে চাপুন।"}
+                          </div>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-1 shrink-0">
+                      {/* Action Buttons: Live Test, Change, Clear */}
+                      <div className="flex items-center gap-1.5 pt-1 border-t border-white/5">
+                        {activeProfile.apiKey && (
+                          <button
+                            onClick={handleTestActiveKeyLive}
+                            disabled={isTestingLiveKey}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 active:scale-95 border border-emerald-500/40 text-emerald-300 text-[10px] font-semibold transition cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                            title="Test live response generation with this key"
+                          >
+                            {isTestingLiveKey ? (
+                              <Loader2 className="w-3 h-3 animate-spin text-emerald-400" />
+                            ) : (
+                              <Zap className="w-3 h-3 text-emerald-400" />
+                            )}
+                            <span>{isTestingLiveKey ? "Testing..." : "Live Test"}</span>
+                          </button>
+                        )}
+
                         <button
                           onClick={() => {
                             soundEngine.playActionBeep();
@@ -738,19 +809,70 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
                           className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 active:scale-95 text-white/90 text-[10px] font-semibold transition cursor-pointer flex items-center gap-1"
                         >
                           <Edit3 className="w-3 h-3 text-cyan-400" />
-                          <span>Change</span>
+                          <span>{activeProfile.apiKey ? "Change" : "Inject Key"}</span>
                         </button>
+
+                        {activeProfile.apiKey && (
+                          <button
+                            onClick={() => {
+                              soundEngine.playAlertBeep();
+                              setApiKeyInput("");
+                              handleSaveInlineApiKey();
+                            }}
+                            className="px-2 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-300 text-[10px] font-semibold transition cursor-pointer flex items-center gap-1"
+                            title="Clear key from local storage"
+                          >
+                            <Trash2 className="w-3 h-3 text-red-400" />
+                            <span>Clear</span>
+                          </button>
+                        )}
+
+                        {onOpenApiKeySetup && (
+                          <button
+                            onClick={() => {
+                              soundEngine.playActionBeep();
+                              onOpenApiKeySetup();
+                              onClose();
+                            }}
+                            className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/15 text-white/75 hover:text-white text-[10px] font-medium transition cursor-pointer flex items-center gap-1 ml-auto"
+                            title="সম্পূর্ণ সেটআপ মডাল ও গাইড ওপেন করুন"
+                          >
+                            <Sparkles className="w-3 h-3 text-amber-400" />
+                            <span>গাইড / মডাল</span>
+                          </button>
+                        )}
                       </div>
                     </div>
                   ) : (
-                    /* Inline Simple Key Editor (Clean & Direct) */
-                    <div className="bg-black/50 border border-emerald-500/30 rounded-xl p-2.5 space-y-2">
+                    /* Inline API Key Injector Editor */
+                    <div className="bg-black/50 border border-emerald-500/40 rounded-xl p-2.5 space-y-2 shadow-lg">
+                      {/* Provider Selector Pills */}
+                      <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pb-1">
+                        {(["auto", "gemini", "openrouter", "openai"] as const).map((prov) => {
+                          const isSelected = selectedProvider === prov;
+                          return (
+                            <button
+                              key={prov}
+                              type="button"
+                              onClick={() => setSelectedProvider(prov)}
+                              className={`px-2 py-0.5 rounded text-[9px] font-medium transition cursor-pointer whitespace-nowrap ${
+                                isSelected
+                                  ? "bg-emerald-500 text-zinc-950 font-bold"
+                                  : "bg-white/5 hover:bg-white/10 text-white/60"
+                              }`}
+                            >
+                              {prov === "auto" ? "Auto Detect" : prov.toUpperCase()}
+                            </button>
+                          );
+                        })}
+                      </div>
+
                       <div className="relative flex items-center">
                         <input
                           type={showApiKeyText ? "text" : "password"}
                           value={apiKeyInput}
                           onChange={(e) => setApiKeyInput(e.target.value)}
-                          placeholder="Paste API Key (Gemini, OpenRouter, etc.)"
+                          placeholder="Paste API Key (AIzaSy... / OpenRouter / etc.)"
                           autoComplete="off"
                           spellCheck="false"
                           disabled={isVerifyingApiKey}
@@ -766,8 +888,8 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
                       </div>
 
                       <div className="flex items-center justify-between gap-1.5 pt-0.5">
-                        <span className="text-[10px] text-white/40">
-                          Saves permanently on this device
+                        <span className="text-[9.5px] text-white/40">
+                          💾 Stored in Browser LocalStorage
                         </span>
 
                         <div className="flex items-center gap-1.5">
@@ -790,17 +912,49 @@ export const ToolsSidePanel: React.FC<ToolsSidePanelProps> = ({
                             {isVerifyingApiKey ? (
                               <>
                                 <Loader2 className="w-3 h-3 animate-spin" />
-                                <span>Checking...</span>
+                                <span>Verifying...</span>
                               </>
                             ) : (
                               <>
-                                <Check className="w-3 h-3" />
-                                <span>Save & Lock</span>
+                                <Zap className="w-3 h-3" />
+                                <span>Inject & Test Live</span>
                               </>
                             )}
                           </button>
                         </div>
                       </div>
+                    </div>
+                  )}
+
+                  {/* Live Response Result Preview Box */}
+                  {liveTestResult && (
+                    <div className={`p-2 rounded-xl text-[10px] space-y-1 ${
+                      liveTestResult.isError
+                        ? "bg-red-500/15 border border-red-500/30 text-red-300"
+                        : "bg-emerald-500/15 border border-emerald-500/30 text-emerald-200"
+                    }`}>
+                      <div className="flex items-center gap-1.5 font-semibold">
+                        {liveTestResult.isError ? <AlertCircle className="w-3 h-3 shrink-0" /> : <CheckCircle2 className="w-3 h-3 shrink-0 text-emerald-400" />}
+                        <span>{liveTestResult.message}</span>
+                      </div>
+                      {liveTestResult.liveText && (
+                        <div className="bg-black/40 rounded-lg p-1.5 text-[9px] font-mono text-white/90 border border-white/5">
+                          <span className="text-emerald-400 font-bold block mb-0.5">Live Output:</span>
+                          "{liveTestResult.liveText}"
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Feedback toast */}
+                  {apiKeyFeedback && !liveTestResult && (
+                    <div className={`px-2.5 py-1.5 rounded-lg text-[10px] flex items-center gap-1.5 ${
+                      apiKeyFeedback.isError
+                        ? "bg-red-500/15 border border-red-500/30 text-red-300"
+                        : "bg-emerald-500/15 border border-emerald-500/30 text-emerald-300"
+                    }`}>
+                      {apiKeyFeedback.isError ? <AlertCircle className="w-3 h-3 shrink-0" /> : <CheckCircle2 className="w-3 h-3 shrink-0" />}
+                      <span className="leading-snug">{apiKeyFeedback.message}</span>
                     </div>
                   )}
 
